@@ -91,10 +91,11 @@ elseif mask==1
     % make an initial mask using SegmentStack
     [mask,T,sizefilt,sizesmooth,fillcleanopt] = SegmentStack(app, mean(e,3));
     app.waitingForInput = true;
+    app.closePopup()
 
     % manually adjust the mask
     disp('Mask Step 2: manually adjust the mask')
-    figure, h=imagesc(mask);
+    figure, h = imagesc(mask);
     %close(figure)
     manadjust=questdlg('Do you want to manually adjust the mask? ');
     while strcmp(manadjust,'Yes')
@@ -107,10 +108,11 @@ elseif mask==1
         delete(roi)          
         manadjust = questdlg('Do you want to adjust more? ');
     end
+    app.closePopup()
     
     % dilate the mask
     app.DilationPanel.Visible = 'on'; % gather the user input from panel_2
-    app.MaskAdjustmentPanel.Visible = 'off';
+    app.MaskingPanel.Visible = 'off';
     
     disp('Mask Step 3: dilate the mask to include the edges in all frames')
     numskip=max(round(size(img,3)/100),1);
@@ -128,6 +130,7 @@ elseif mask==1
     
     % apply the mask
     e=logical(repmat(mask,[1 1 size(mask,3)]).*e);
+    app.closePopup()
 end
 
 seg=e;
@@ -165,9 +168,11 @@ if isempty(bw_caps)
         bw_caps=bw_caps | bw_line;    
         morelines=questdlg('Do you want to add more caps?','capping ends','Yes');
     end
-end
-app.SliceProgressPanel.Visible = 'on'; % gather the user input from panel_2
+    
+app.closePopup()
+app.RunComputationPanel.Visible = 'on'; % gather the user input from panel_2
 app.CappingPanel.Visible = 'off';
+end
 
 seg=seg | repmat(bw_caps,[1 1 size(seg,3)]);
 

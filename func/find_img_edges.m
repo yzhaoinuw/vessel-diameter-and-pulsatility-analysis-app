@@ -85,7 +85,7 @@ elseif mask==1
     % of the extraneous edges. It maes the edges look much cleaner, but it's
     % sometime unnecessary and can cause problems if you're trying to
     % average over too many images where there is too much movement.
- 
+    app.ThresholdPanel.Visible = 'on';
     disp('Make a mask that includes the edges in which you are interested.')
     disp('Mask Step 1: Make an initial mask by segmenting the averaged edges. Use the helper function to select parameters to use for the segmentation. Typically you only need to adjust the threshold and size filt and put zeros for everything else. ')
     % make an initial mask using SegmentStack
@@ -170,9 +170,10 @@ if isempty(bw_caps)
     end
     
 app.closePopup()
+end
+
 app.RunComputationPanel.Visible = 'on'; % gather the user input from panel_2
 app.CappingPanel.Visible = 'off';
-end
 
 seg=seg | repmat(bw_caps,[1 1 size(seg,3)]);
 
@@ -227,7 +228,7 @@ for i=1:size(e,3)
     seg(:,:,i)=bwareafilt(seg(:,:,i),1); % keep only the largest area
 end
 
-imagei({img img img},{seg e})
+%imagei({img img img},{seg e})
 
 end
 

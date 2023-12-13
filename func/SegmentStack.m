@@ -58,7 +58,8 @@ else
     %fillcleanopt=input('Fill holes and clean? Enter [1/0] ');
 
     waitfor(app, 'waitingForInput', false);
-    T = app.thresholdValue;
+    %T = app.thresholdValue;
+    T = app.ThresholdPanelValueEditField.Value;
     %app.waitingForInput = true;
     sizefilt = app.filterSize;
     sizesmooth = app.smoothingStructuringElementSize;

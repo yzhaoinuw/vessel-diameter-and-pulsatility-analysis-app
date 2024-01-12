@@ -1,16 +1,16 @@
-function [] = makeCaps(app)
+function images = makeCaps(app, images)
 
 % seg=imclose(seg,strel('disk',4)); % this doesn't work as well as the
 % correction that starts with the code: "if sum(seg(:,:,i),'all')<2*sum(e(:,:,i),'all')"
 
 %% cap off the ends
 % only show a maximum of 100 images
-numskip=max(round(size(app.img, 3)/100), 1);
-showind=1:numskip:size(app.img, 3);
+numskip=max(round(size(images, 3)/100), 1);
+showind=1:numskip:size(images, 3);
 if isempty(app.mask) || size(app.mask, 1)==1
-    imagei({app.img(:,:,showind) app.img(:,:,showind) app.img(:,:,showind)},{app.seg(:,:,showind)}), axis equal
+    imagei({images(:,:,showind) images(:,:,showind) images(:,:,showind)},{app.seg(:,:,showind)}), axis equal
 else
-    imagei({app.img(:,:,showind) app.img(:,:,showind) app.img(:,:,showind)},{repmat(app.mask,[1 1 length(showind)]) app.seg(:,:,showind)}), axis equal
+    imagei({images(:,:,showind) images(:,:,showind) images(:,:,showind)},{repmat(app.mask,[1 1 length(showind)]) app.seg(:,:,showind)}), axis equal
 end
 
 app.CappingPanel.Visible = 'on'; 
@@ -18,9 +18,9 @@ app.CappingPanel.Visible = 'on';
 disp('Click and drag to draw a line to cap off the ends')
 roi = drawline();
 morelines='Yes';
-app.bw_caps=false(size(app.img,[1 2]));
+app.bw_caps=false(size(images,[1 2]));
 while strcmp(morelines,'Yes')
-    bw_line=false(size(app.img,[1 2]));
+    bw_line=false(size(images,[1 2]));
     disp('Move the line and dbl click when satisfied. (Depending on the version of Matlab, you might have to move the end points)')
     wait(roi)
     linelength=((roi.Position(1,1)-roi.Position(2,1)).^2 + (roi.Position(1,2)-roi.Position(2,2)).^2).^0.5;

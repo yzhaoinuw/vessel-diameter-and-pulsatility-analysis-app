@@ -1,5 +1,6 @@
-function [] = makeSeg(app)
+function images = makeSeg(app, images)
 
+%app.SliceProgressPanel.Visible = 'on';
 fillmethod = 'holes';
 app.seg = app.seg | repmat(app.bw_caps,[1 1 size(app.seg, 3)]);
 
@@ -8,7 +9,6 @@ if ~strcmp(fillmethod,'holes')
     cp(1)=mean([stats(1).Centroid(1,1),stats(2).Centroid(1,1)]);
     cp(2)=mean([stats(1).Centroid(1,2),stats(2).Centroid(1,2)]);
 end
-app.SliceProgressPanel.Visible = 'on';
 
 % fill in center
 for i=1:size(app.e,3)
@@ -53,8 +53,8 @@ for i=1:size(app.e,3)
     end
     app.seg(:,:,i)=bwareafilt(app.seg(:,:,i),1); % keep only the largest area
 end
-
-imagei({app.img app.img app.img},{app.seg app.e})
+app.SliceProgressPanel_TextArea.Value = '';
+imagei({images images images},{app.seg app.e})
 
 %app.RunComputationPanel.Visible = 'on'; % gather the user input from panel_2
 

@@ -1,4 +1,4 @@
-function [] = makeMask(app)
+function images = makeMask(app, images)
     % make a mask from the averaged edges and multiply by the edges to get rid
     % of the extraneous edges. It maes the edges look much cleaner, but it's
     % sometime unnecessary and can cause problems if you're trying to
@@ -34,16 +34,17 @@ function [] = makeMask(app)
 
         app.DilationPanel.Visible = 'on'; % gather the user input from panel_2
         disp('Mask Step 3: dilate the mask to include the edges in all frames')
-        numskip=max(round(size(app.img, 3)/100), 1);
-        showind=1:numskip:size(app.img, 3);
+        numskip=max(round(size(images, 3)/100), 1);
+        showind=1:numskip:size(images, 3);
         sz_dil=1;
         disp('The current mask is in red. The edges are shown in green. Make sure the mask includes all of the edges of interest. I often start by dilating with a structuring element of size 5 pixels. ')
         while sz_dil>0
-            imagei({app.img(:,:,showind) app.img(:,:,showind) app.img(:,:,showind)},{repmat(app.mask,[1 1 length(showind)]) app.e(:,:,showind)})
+            imagei({images(:,:,showind) images(:,:,showind) images(:,:,showind)},{repmat(app.mask,[1 1 length(showind)]) app.e(:,:,showind)})
             %sz_dil=input('What size structuring element do you want to use to dilate the mask?  ');
             waitfor(app, 'waitingForInput', false);
             sz_dil = app.DilationPanel_SizeEditField.Value;
             app.waitingForInput = true;
+            app.DilationPanel_SizeEditField.Value = 0;
             app.mask=imdilate(app.mask,strel('disk',sz_dil)); 
         end
         

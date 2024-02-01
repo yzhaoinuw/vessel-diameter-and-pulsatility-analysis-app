@@ -11,10 +11,13 @@ if ~strcmp(fillmethod,'holes')
 end
 
 % fill in center
-for i=1:size(app.e,3)
+h = waitbar(0, 'Processing...');
+nSlices = size(app.e,3);
+for i=1:nSlices
+    waitbar(i/nSlices, h, ['processing slice ' num2str(i) ' of ' num2str(nSlices)])
     if mod(i,100)==0
-        message = ['on slice ' num2str(i) ' of ' num2str(size(app.e,3))];
-        disp(['on slice ' num2str(i) ' of ' num2str(size(app.e,3)) ])
+        message = ['on slice ' num2str(i) ' of ' num2str(nSlices)];
+        disp(['on slice ' num2str(i) ' of ' num2str(nSlices)])
         app.SliceProgressPanel_TextArea.Value = [app.SliceProgressPanel_TextArea.Value(:)', {message}];
     end
     if strcmp(fillmethod,'holes')
@@ -53,6 +56,7 @@ for i=1:size(app.e,3)
     end
     app.seg(:,:,i)=bwareafilt(app.seg(:,:,i),1); % keep only the largest area
 end
+close(h)
 app.SliceProgressPanel_TextArea.Value = '';
 imagei({images images images},{app.seg app.e})
 

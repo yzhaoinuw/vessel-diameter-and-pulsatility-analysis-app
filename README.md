@@ -26,4 +26,4 @@ The results include the following
 https://github.com/yzhaoinuw/vessel-diameter-and-pulsatility-analysis-app/assets/22312388/7a40e9c5-29ae-49a9-bf9c-43b65c70c032
 
 ## Credits
-The underlying algorithms for calculating the vessel diameter and pulsatility are developed by Dr. Kimberly Boster (@kimst12).
+The underlying algorithms for calculating the vessel diameter and pulsatility are developed by [Dr. Kimberly Boster](https://orcid.org/0000-0001-5178-128X) (@kimst12).

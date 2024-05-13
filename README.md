@@ -23,4 +23,4 @@ The results include the following
 'dist_caps' ...
 
 ## Demo
-[![Watch the video](https://drive.google.com/file/d/1wuRDR1wWErjcfb5ERfFdfqkCTKhnT4vp/view?usp=sharing)](https://docs.google.com/presentation/d/12Mqp3F5zPEqGi3aCz-JoCV3vPUqY9MoaWCl5UYLtJmQ/edit?usp=drive_link)
+[![Watch the video](https://drive.google.com/file/d/1wuRDR1wWErjcfb5ERfFdfqkCTKhnT4vp/view?usp=sharing)](https://drive.google.com/file/d/1MPTCPYLpDC4qM3oBmI_06qhuHX9Z17kj/view?usp=sharing)

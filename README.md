@@ -23,4 +23,7 @@ The results include the following
 'dist_caps' ...
 
 ## Demo
-[![Watch the video](https://drive.google.com/file/d/1wuRDR1wWErjcfb5ERfFdfqkCTKhnT4vp/view?usp=sharing)](https://drive.google.com/file/d/1MPTCPYLpDC4qM3oBmI_06qhuHX9Z17kj/view?usp=sharing)
+https://github.com/yzhaoinuw/vessel-diameter-and-pulsatility-analysis-app/assets/22312388/7a40e9c5-29ae-49a9-bf9c-43b65c70c032
+
+
+

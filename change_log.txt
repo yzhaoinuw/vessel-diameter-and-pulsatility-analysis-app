@@ -1,0 +1,4 @@
+#### v0.1.2 (2024-08-16)
+1. Replaced find_dist_caps.m with an updated version by Kim.
+
+

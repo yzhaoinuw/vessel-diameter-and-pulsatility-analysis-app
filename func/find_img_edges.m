@@ -1,5 +1,5 @@
-function [e,seg,bw_caps,mask] = find_img_edges(app, img, bw_caps, mask, varargin)
-% Usage: [e,seg,bw_caps,mask] = find_img_edges(img,bw_caps,mask,[edgemethod],[fillmethod])
+function [e,seg,bw_caps,mask] = find_img_edges(img,bw_caps,mask,varargin)
+% Usage: [e,seg,bw_caps,mask] = find_img_edges(img,bw_caps,mask,[edgemethod],[fillmethod],[plt])
 %FIND_IMG_EDGES Finds the edges of the image, and segements it by filling
 %in the space between the edges and user-defined end caps
 
@@ -28,7 +28,9 @@ function [e,seg,bw_caps,mask] = find_img_edges(app, img, bw_caps, mask, varargin
 % to fill in the region that that contains the centerpoint between the
 % caps ('cp'). 'cp' requires cp to be inside the vessel, but it can be helpful when regions
 % outside of the vessel are getting filled, and makes a mask unncessary in
-% some cases. 
+% some cases. 'original' is the first/old version of the 'holes' method.
+% plt: if you want to plot the results. put 1 to plot, 0 to suppress
+% plotting
 
 % OUTPUTS
 % e: binary array the same size as img with the edges
@@ -36,29 +38,33 @@ function [e,seg,bw_caps,mask] = find_img_edges(app, img, bw_caps, mask, varargin
 % bw_caps: MXN binary array with the caps that were used
 % mask: MXN binary array with the mask that was used
 
-% ideas for improvement: try edge3
 % add more catches in case users supply invalid parameters for fillmethod
 % or edgemethod. 
 % add a watershed option for segmentation
+
+%% dependencies
+% calls imagei.m, SegmentStack.m, sliderseg.m, seg.m, and superSlider.m
 
 %% version history
 % Written by Kimberly Boster, October 2022
 % 2022_10_22: changed the outputs to no longer return the centerline
 % 2022_10_27: changed edge method from 'Canny' to 'log'
+% 2023_10_15: added plt to be an option input to supress plotting 
 
-if nargin == 5
-    if ~isempty(varargin{1})
-        edgemethod=varargin{1};
-    else
-        edgemethod='Canny';
-    end
+if nargin>=4 && ~isempty(varargin{1})
+    edgemethod=varargin{1};
 else
     edgemethod='Canny';
 end
-if nargin == 6
+if nargin>=5 && ~isempty(varargin{2})
     fillmethod=varargin{2};
 else
     fillmethod='holes';
+end
+if nargin==6
+    plt=varargin{3};
+else
+    plt=1;
 end
 
 
@@ -78,6 +84,7 @@ for i=1:size(img,3)
 end
 
 %% use the mask to clean up the edges
+e_original=e; % save the original edges in case of a mask error; would save memory to just recalculate e, but its probably faster to save a copy.
 if numel(mask)>1
     e=logical(repmat(mask,[1 1 size(mask,3)]).*e);
 elseif mask==1
@@ -85,22 +92,19 @@ elseif mask==1
     % of the extraneous edges. It maes the edges look much cleaner, but it's
     % sometime unnecessary and can cause problems if you're trying to
     % average over too many images where there is too much movement.
-    app.ThresholdPanel.Visible = 'on';
+
     disp('Make a mask that includes the edges in which you are interested.')
     disp('Mask Step 1: Make an initial mask by segmenting the averaged edges. Use the helper function to select parameters to use for the segmentation. Typically you only need to adjust the threshold and size filt and put zeros for everything else. ')
     % make an initial mask using SegmentStack
-    [mask,T,sizefilt,sizesmooth,fillcleanopt] = SegmentStack(app, mean(e,3));
-    app.waitingForInput = true;
-    app.closePopup()
-
+    [mask,~,~,~,~]=SegmentStack(mean(e,3));
+    
     % manually adjust the mask
     disp('Mask Step 2: manually adjust the mask')
-    figure, h = imagesc(mask);
-    %close(figure)
+    figure, h=imagesc(mask);
     manadjust=questdlg('Do you want to manually adjust the mask? ');
     while strcmp(manadjust,'Yes')
         title({'Click to create a polygonal region that includes the', 'portion you want to keep. Dbl click when satisfied.'})
-        roi = drawpolygon();
+        roi = drawpolygon;
         wait(roi)
         bw = createMask(roi);
         mask=mask.*bw;
@@ -108,29 +112,22 @@ elseif mask==1
         delete(roi)          
         manadjust = questdlg('Do you want to adjust more? ');
     end
-    app.closePopup()
     
     % dilate the mask
-    app.DilationPanel.Visible = 'on'; % gather the user input from panel_2
-    app.MaskingPanel.Visible = 'off';
-    
     disp('Mask Step 3: dilate the mask to include the edges in all frames')
     numskip=max(round(size(img,3)/100),1);
     showind=1:numskip:size(img,3);
     sz_dil=1;
     disp('The current mask is in red. The edges are shown in green. Make sure the mask includes all of the edges of interest. I often start by dilating with a structuring element of size 5 pixels. ')
     while sz_dil>0
-        imagei({img(:,:,showind) img(:,:,showind) img(:,:,showind)},{repmat(mask,[1 1 length(showind)]) e(:,:,showind)})
-        %sz_dil=input('What size structuring element do you want to use to dilate the mask?  ');
-        waitfor(app, 'waitingForInput', false);
-        sz_dil = app.DilationPanel_SizeEditField.Value;
-        app.waitingForInput = true;
+        imagei({img(:,:,showind) img(:,:,showind) img(:,:,showind)},{repmat(mask,[1 1 length(showind)]) e(:,:,showind)}), axis equal
+        sz_dil=input('What size structuring element do want to use to dilate the mask?  ');
+        close;
         mask=imdilate(mask,strel('disk',sz_dil)); 
     end
     
     % apply the mask
     e=logical(repmat(mask,[1 1 size(mask,3)]).*e);
-    app.closePopup()
 end
 
 seg=e;
@@ -147,10 +144,8 @@ if isempty(bw_caps)
     else
         imagei({img(:,:,showind) img(:,:,showind) img(:,:,showind)},{repmat(mask,[1 1 length(showind)]) seg(:,:,showind)}), axis equal
     end
-    app.CappingPanel.Visible = 'on'; 
-    app.DilationPanel.Visible = 'off';
-    disp('Click and drag to draw a line to cap off the ends')
-    roi = drawline();
+    disp('Click and drag to draw a line to cap off the ends. Longer is better, but it will be extended across the entire image')
+    roi = drawline;
     morelines='Yes';
     bw_caps=false(size(img,[1 2]));
     while strcmp(morelines,'Yes')
@@ -168,16 +163,11 @@ if isempty(bw_caps)
         bw_caps=bw_caps | bw_line;    
         morelines=questdlg('Do you want to add more caps?','capping ends','Yes');
     end
-    
-app.closePopup()
 end
-
-app.RunComputationPanel.Visible = 'on'; % gather the user input from panel_2
-app.CappingPanel.Visible = 'off';
-
+bw_caps = extend_caps_local(bw_caps); % ================================================ test
 seg=seg | repmat(bw_caps,[1 1 size(seg,3)]);
 
-if ~strcmp(fillmethod,'holes')
+if ~strcmp(fillmethod,'holes') && ~strcmp(fillmethod,'original')
     stats=regionprops(bw_caps,'Centroid');
     cp(1)=mean([stats(1).Centroid(1,1),stats(2).Centroid(1,1)]);
     cp(2)=mean([stats(1).Centroid(1,2),stats(2).Centroid(1,2)]);
@@ -187,28 +177,53 @@ end
 % fill in center
 for i=1:size(e,3)
     if mod(i,100)==0
-        message = ['on slice ' num2str(i) ' of ' num2str(size(e,3))];
         disp(['on slice ' num2str(i) ' of ' num2str(size(e,3)) ])
-        app.SliceProgressPanel_TextArea.Value = [app.SliceProgressPanel_TextArea.Value(:)', {message}];
     end
     if strcmp(fillmethod,'holes')
         seg(:,:,i)=logical(imfill(seg(:,:,i),'holes'));    
         seg(:,:,i)=logical(seg(:,:,i) .* ~bw_caps); % remove the caps from the segmentation  
         it=1;
-        while sum(seg(:,:,i),'all')<2*sum(e(:,:,i),'all')        
-            seg(:,:,i)=imdilate(seg(:,:,i),strel('disk',it)); % dilate to fill in some holes
-            seg(:,:,i)=logical(seg(:,:,i) | bw_caps); % add the caps back in
-            seg(:,:,i)=logical(imfill(seg(:,:,i),'holes')); % fill in
-            seg(:,:,i)=imerode(seg(:,:,i),strel('disk',it)); % erode back to original size
-            seg(:,:,i)=logical(seg(:,:,i).*~bw_caps); % remove the caps 
-            it=it+1;
-            if it>10 
-                disp(['image # ' num2str(i) ': couldnt fill the edges enough'])
-                break
-            end
-        end
+        L=bwlabel((seg(:,:,i).*~e(:,:,i)) | bw_caps);
+        badseg=length(nonzeros(unique(L.*bw_caps)))>1; % make sure the segmentation is touching both caps 
         
-    else
+        if badseg
+            % check for a mask error
+            mask2=mask;
+%             seg_original=seg(:,:,i);
+            while  badseg
+                mask2=imdilate(mask2,strel('disk',1)); 
+                e(:,:,i)=(e_original(:,:,i).*mask2);
+                seg(:,:,i)=logical(imfill(e(:,:,i)|bw_caps,'holes'));
+                seg(:,:,i)=logical(seg(:,:,i) .* ~bw_caps); % remove the caps from the segmentation
+                it=it+1;
+                L=bwlabel((seg(:,:,i).*~e(:,:,i)) | bw_caps);
+                badseg=length(nonzeros(unique(L.*bw_caps)))>1;
+                if it>5 && badseg
+%                     disp(['image # ' num2str(i) ': not a mask error alone'])
+                    it=1;
+%                     seg(:,:,i)=seg_original;
+                    break
+                end
+            end
+        
+            while badseg      
+                seg(:,:,i)=imdilate(seg(:,:,i),strel('disk',it)); % dilate to fill in some holes
+                seg(:,:,i)=logical(seg(:,:,i) | bw_caps); % add the caps back in
+                seg(:,:,i)=logical(imfill(seg(:,:,i),'holes')); % fill in
+                seg(:,:,i)=imerode(seg(:,:,i),strel('disk',it)); % erode back to original size
+                seg(:,:,i)=imfill(seg(:,:,i) | bw_caps,'holes'); % fill in gaps between the segmentation and the caps, if created by erosion
+                seg(:,:,i)=logical(seg(:,:,i).*~bw_caps); % remove the caps 
+                it=it+1;
+                L=bwlabel((seg(:,:,i).*~e(:,:,i)) | bw_caps);
+                badseg=length(nonzeros(unique(L.*bw_caps)))>1;
+                if it>10 
+                    disp(['image # ' num2str(i) ': couldnt fill the edges enough'])
+                    break
+                end
+            end
+        end % if badseg
+        
+    elseif strcmp(fillmethod,'cp')
         seg(:,:,i)=logical(imfill(seg(:,:,i),round([cp(2) cp(1)]))); % could let the cp change if the center drifts, but this causes a problem if you get an erroneous area.
         seg(:,:,i)=logical(seg(:,:,i) .* ~bw_caps); % remove the caps from the segmentation  
         it=1;
@@ -224,11 +239,34 @@ for i=1:size(e,3)
                 break
             end
         end
+    elseif strcmp(fillmethod,'original')
+        seg(:,:,i)=logical(imfill(seg(:,:,i),'holes'));    
+        seg(:,:,i)=logical(seg(:,:,i) .* ~bw_caps); % remove the caps from the segmentation  
+        it=1;
+        while sum(seg(:,:,i),'all')<2*sum(e(:,:,i),'all')  % dilate seg until it's larger than 2 times e      
+            seg(:,:,i)=imdilate(seg(:,:,i),strel('disk',it)); % dilate to fill in some holes
+            seg(:,:,i)=logical(seg(:,:,i) | bw_caps); % add the caps back in
+            seg(:,:,i)=logical(imfill(seg(:,:,i),'holes')); % fill in
+            seg(:,:,i)=imerode(seg(:,:,i),strel('disk',it)); % erode back to original size
+            seg(:,:,i)=logical(seg(:,:,i).*~bw_caps); % remove the caps 
+            it=it+1;
+            if it>10 
+                disp(['image # ' num2str(i) ': couldnt fill the edges enough'])
+                break
+            end
+        end
+    else
+        disp('not a valid fillmethod')
     end
     seg(:,:,i)=bwareafilt(seg(:,:,i),1); % keep only the largest area
 end
 
-%imagei({img img img},{seg e})
+if plt
+    % imagei({img img img},{seg e}) % show only results
+    % imagei({img img img},{repmat(bw_caps,[1 1 size(seg,3)]) seg e}) % show bw caps
+    imagei({img img img},{repmat(bw_caps | mask,[1 1 size(seg,3)]) seg e}) % show bw caps and mask
+    axis equal
+end
 
 end
 
@@ -269,3 +307,75 @@ end
 %     cp(:,2,i)=polyval(p,xlimits(1):xlimits(2));
 %     cp(:,1,i)=xlimits(1):xlimits(2);
 % end
+
+%% caps extension
+function new_caps = extend_caps_local(bw_caps)
+% extend_caps - extends bw_caps to the edges of the image
+%
+% inputs:
+%    - bw_caps - binary image with linear regions as vessel end caps
+%              - bw_caps is expected to come from find_img_edges()
+% outputs:
+%    - new_caps - binary image with caps extended to the edges of the image
+
+    SE = strel("disk", 1); % structuring element for erosion and dilation
+    new_caps = imerode(bw_caps, SE); % intialize new_caps as bw_caps eroded down to 1px
+    
+    stats = regionprops(new_caps, "Centroid", "Orientation"); % get centroids and angles of two caps
+    centroids = cat(1, stats.Centroid); % separate centroids into separate matrix
+
+    [y_max, x_max] = size(bw_caps); % get max x and y of image
+    
+    new_caps = im2double(new_caps); % convert new_caps to double for use with insertShape
+
+    for i = 1 : size(stats) % run for every region detected
+        % yf and xf are the projected lines of the caps based on the stats from regionprops and are algebraically equivalent
+        yf = @(x) (1/tand(stats(i).Orientation - 90))*(x - centroids(i, 1)) + centroids(i, 2);
+        xf = @(y) tand(stats(i).Orientation - 90)*(y - centroids(i, 2)) + centroids(i, 1);
+        
+        endpoints = calculate_endpoints(yf, xf, x_max, y_max); % get intersection points between image borders and current projected line
+    
+        new_caps = insertShape(new_caps, 'line', endpoints); % add current extended cap to new_caps
+    end
+
+    new_caps = mean(new_caps, 3); % combine new_caps back into a 2D image
+    new_caps = imbinarize(new_caps); % convert new_caps back into a binary image
+    new_caps = imdilate(new_caps, SE); % dilate extended caps back to being 3px wide
+
+end
+
+% calculate where the given line will intersect the edges of the image
+function endpoints = calculate_endpoints(yf, xf, x_max, y_max)
+    endpoints = [];
+
+    % math is done based on origin at bottom left
+
+    % left vertical, x = 0 {0 <= y <= y_max}
+    v1_limits = [0, y_max];
+    if (yf(0) >= v1_limits(1) && yf(0) <= v1_limits(2))
+        endpoints(size(endpoints, 1)+1, :) = [0, yf(0)];
+        %disp("v1");
+    end
+
+    % right vertical, x = x_max {0 <= y <= y_max}
+    v2_limits = [0, y_max];
+    if (yf(x_max) >= v2_limits(1) && yf(x_max) <= v2_limits(2))
+        endpoints(size(endpoints, 1)+1, :) = [x_max, yf(x_max)];
+        %disp("v2");
+    end
+    
+
+    % bottom horizontal, y = 0 {0 <= x <= x_max}
+    h1_limits = [0, x_max];
+    if (xf(0) >= h1_limits(1) && xf(0) <= h1_limits(2))
+        endpoints(size(endpoints, 1)+1, :) = [xf(0), 0];
+        %disp("h1");
+    end
+
+    % top horizontal, y = y_max {0 <= x <= x_max}
+    h2_limits = [0, x_max];
+    if (xf(y_max) >= h2_limits(1) && xf(y_max) <= h2_limits(2))
+        endpoints(size(endpoints, 1)+1, :) = [xf(y_max), y_max];
+        %disp("h2");
+    end
+end

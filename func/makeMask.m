@@ -3,9 +3,16 @@ function images = makeMask(app, images)
     % of the extraneous edges. It maes the edges look much cleaner, but it's
     % sometime unnecessary and can cause problems if you're trying to
     % average over too many images where there is too much movement.
+
+    app.e_original=app.e; % save the original edges in case of a mask error; would save memory to just recalculate e, but its probably faster to save a copy.
     if numel(app.mask)>1
         app.e=logical(repmat(app.mask,[1 1 size(app.mask,3)]).*app.e);
     elseif app.mask==1
+        % make a mask from the averaged edges and multiply by the edges to get rid
+        % of the extraneous edges. It maes the edges look much cleaner, but it's
+        % sometime unnecessary and can cause problems if you're trying to
+        % average over too many images where there is too much movement.
+
         app.ThresholdPanel.Visible = 'on';
         disp('Make a mask that includes the edges in which you are interested.')
         disp('Mask Step 1: Make an initial mask by segmenting the averaged edges. Use the helper function to select parameters to use for the segmentation. Typically you only need to adjust the threshold and size filt and put zeros for everything else. ')
@@ -39,7 +46,7 @@ function images = makeMask(app, images)
         sz_dil=1;
         disp('The current mask is in red. The edges are shown in green. Make sure the mask includes all of the edges of interest. I often start by dilating with a structuring element of size 5 pixels. ')
         while sz_dil>0
-            imagei({images(:,:,showind) images(:,:,showind) images(:,:,showind)},{repmat(app.mask,[1 1 length(showind)]) app.e(:,:,showind)})
+            imagei({images(:,:,showind) images(:,:,showind) images(:,:,showind)},{repmat(app.mask,[1 1 length(showind)]) app.e(:,:,showind)}), axis equal
             %sz_dil=input('What size structuring element do you want to use to dilate the mask?  ');
             waitfor(app, 'waitingForInput', false);
             sz_dil = app.DilationPanel_SizeEditField.Value;

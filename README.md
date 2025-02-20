@@ -25,5 +25,8 @@ The results include the following
 ## Demo
 https://github.com/yzhaoinuw/vessel-diameter-and-pulsatility-analysis-app/assets/22312388/7a40e9c5-29ae-49a9-bf9c-43b65c70c032
 
+## Notes For Developers
+The core algorithm implemented in find_img_edges.m is broken into four functions in func/ to suit the app's purpose of being interactive with the user. The four functions are 1) findEdges, 2) makeMask, 3) makeCaps, and 4) makeSeg. Comments are added to outline the correspondence of the four functions to find_img_edges. **Every time find_img_edges gets updated, the developer should update the four functions as needed.**
+
 ## Credits
 The underlying algorithms for calculating the vessel diameter and pulsatility are developed by [Dr. Kimberly Boster](https://orcid.org/0000-0001-5178-128X) (@kimst12).

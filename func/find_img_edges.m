@@ -68,7 +68,7 @@ else
 end
 
 
-%% find edges
+%% find edges; section below goes to makeEdges.m in the Pulstatility App
 for i=1:size(img,3)
     if ~isa(edgemethod,'double')
         if strcmp('both',edgemethod)
@@ -83,7 +83,7 @@ for i=1:size(img,3)
     end
 end
 
-%% use the mask to clean up the edges
+%% use the mask to clean up the edges; section below goes to makeMask.m in the Pulstatility App
 e_original=e; % save the original edges in case of a mask error; would save memory to just recalculate e, but its probably faster to save a copy.
 if numel(mask)>1
     e=logical(repmat(mask,[1 1 size(mask,3)]).*e);
@@ -134,7 +134,7 @@ seg=e;
 % seg=imclose(seg,strel('disk',4)); % this doesn't work as well as the
 % correction that starts with the code: "if sum(seg(:,:,i),'all')<2*sum(e(:,:,i),'all')"
 
-%% cap off the ends
+%% cap off the ends; section below goes to makeCaps.m in the Pulstatility App
 if isempty(bw_caps)
     % only show a maximum of 100 images
     numskip=max(round(size(img,3)/100),1);
@@ -164,7 +164,9 @@ if isempty(bw_caps)
         morelines=questdlg('Do you want to add more caps?','capping ends','Yes');
     end
 end
-bw_caps = extend_caps_local(bw_caps); % ================================================ test
+
+%% section below goes to makeSeg.m in the Pulstatility App
+bw_caps = extend_caps_local(bw_caps); % extend caps to edges of image
 seg=seg | repmat(bw_caps,[1 1 size(seg,3)]);
 
 if ~strcmp(fillmethod,'holes') && ~strcmp(fillmethod,'original')
@@ -173,12 +175,15 @@ if ~strcmp(fillmethod,'holes') && ~strcmp(fillmethod,'original')
     cp(2)=mean([stats(1).Centroid(1,2),stats(2).Centroid(1,2)]);
 end
 
+caps_convhull = bwconvhull(bw_caps); % convex hull of caps
 
 % fill in center
 for i=1:size(e,3)
     if mod(i,100)==0
         disp(['on slice ' num2str(i) ' of ' num2str(size(e,3)) ])
     end
+    %seg(:,:,i) = seg(:, :, i) .* caps_convhull; % remove all pixels not inside convex hull of caps
+    e(:,:,i) = caps_convhull .* e(:, :, i); % remove all pixels not inside convex hull of caps
     if strcmp(fillmethod,'holes')
         seg(:,:,i)=logical(imfill(seg(:,:,i),'holes'));    
         seg(:,:,i)=logical(seg(:,:,i) .* ~bw_caps); % remove the caps from the segmentation  

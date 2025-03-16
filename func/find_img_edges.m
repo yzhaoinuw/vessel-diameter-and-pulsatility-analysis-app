@@ -20,7 +20,7 @@ function [e,seg,bw_caps,mask] = find_img_edges(img,bw_caps,mask,varargin)
 %   2. 'log': more sensitive to picking up edges than 'Canny', but they tend to be more curvy, rather than straight. 
 %   3. If you supply a vector, it will determine the gradient magnitude by dotting the gradient vector with the supplied vector at every point, essentially only looking for edges that are aligned with the vector. 
 %       To use this option, supply a 1X2 vector indicating the direction, 
-%       e.g. [1 1] for edges oriented at a 45 degree angle. 
+%       e.g. [1 1] for edges oriented at a 45 degree angnysdle. 
 %   4. Any other method allowed by edge. See the documentation for the matlab function edge
 %   5. 'Both' combines 'Canny' and 'log' and can be a good option when
 %   edges are difficult to detect. 
@@ -50,6 +50,10 @@ function [e,seg,bw_caps,mask] = find_img_edges(img,bw_caps,mask,varargin)
 % 2022_10_22: changed the outputs to no longer return the centerline
 % 2022_10_27: changed edge method from 'Canny' to 'log'
 % 2023_10_15: added plt to be an option input to supress plotting 
+% 2024_07_02: Taylor Bayarerdene - merged find_img_edges and find_img_edgesv2 
+%             with the original holes method as an optional input
+% 2025_03_04: Taylor Bayarerdene - added local version of extend_caps function + helper function 
+%             and convexhull multiplication of edges
 
 if nargin>=4 && ~isempty(varargin{1})
     edgemethod=varargin{1};
@@ -68,7 +72,7 @@ else
 end
 
 
-%% find edges; section below goes to makeEdges.m in the Pulstatility App
+%% find edges; section below goes to makeEdges.m in the Pulsatility App
 for i=1:size(img,3)
     if ~isa(edgemethod,'double')
         if strcmp('both',edgemethod)
@@ -83,7 +87,7 @@ for i=1:size(img,3)
     end
 end
 
-%% use the mask to clean up the edges; section below goes to makeMask.m in the Pulstatility App
+%% use the mask to clean up the edge; section below goes to makeMask.m in the Pulsatility App
 e_original=e; % save the original edges in case of a mask error; would save memory to just recalculate e, but its probably faster to save a copy.
 if numel(mask)>1
     e=logical(repmat(mask,[1 1 size(mask,3)]).*e);
@@ -134,7 +138,7 @@ seg=e;
 % seg=imclose(seg,strel('disk',4)); % this doesn't work as well as the
 % correction that starts with the code: "if sum(seg(:,:,i),'all')<2*sum(e(:,:,i),'all')"
 
-%% cap off the ends; section below goes to makeCaps.m in the Pulstatility App
+%% cap off the ends; section below goes to makeCaps.m in the Pulsatility App
 if isempty(bw_caps)
     % only show a maximum of 100 images
     numskip=max(round(size(img,3)/100),1);
@@ -163,10 +167,12 @@ if isempty(bw_caps)
         bw_caps=bw_caps | bw_line;    
         morelines=questdlg('Do you want to add more caps?','capping ends','Yes');
     end
+
+    % moved to this conditional to only extend caps when they are being generated initially
+    bw_caps = extend_caps_local(bw_caps); % extend caps to edges of image
 end
 
-%% section below goes to makeSeg.m in the Pulstatility App
-bw_caps = extend_caps_local(bw_caps); % extend caps to edges of image
+%% fill in area; section below goes to makeSeg.m in the Pulsatility App
 seg=seg | repmat(bw_caps,[1 1 size(seg,3)]);
 
 if ~strcmp(fillmethod,'holes') && ~strcmp(fillmethod,'original')
@@ -176,6 +182,7 @@ if ~strcmp(fillmethod,'holes') && ~strcmp(fillmethod,'original')
 end
 
 caps_convhull = bwconvhull(bw_caps); % convex hull of caps
+%caps_convhull = ones(size(bw_caps));
 
 % fill in center
 for i=1:size(e,3)
@@ -183,7 +190,7 @@ for i=1:size(e,3)
         disp(['on slice ' num2str(i) ' of ' num2str(size(e,3)) ])
     end
     %seg(:,:,i) = seg(:, :, i) .* caps_convhull; % remove all pixels not inside convex hull of caps
-    e(:,:,i) = caps_convhull .* e(:, :, i); % remove all pixels not inside convex hull of caps
+    e(:,:,i) = caps_convhull .* e(:,:,i); % remove all pixels not inside convex hull of caps
     if strcmp(fillmethod,'holes')
         seg(:,:,i)=logical(imfill(seg(:,:,i),'holes'));    
         seg(:,:,i)=logical(seg(:,:,i) .* ~bw_caps); % remove the caps from the segmentation  
@@ -195,7 +202,9 @@ for i=1:size(e,3)
             % check for a mask error
             mask2=mask;
 %             seg_original=seg(:,:,i);
-            while  badseg
+            e_original(:,:,i) = caps_convhull .* e_original(:,:,i); % remove all pixels not inside convex hull of caps
+
+            while  badseg    
                 mask2=imdilate(mask2,strel('disk',1)); 
                 e(:,:,i)=(e_original(:,:,i).*mask2);
                 seg(:,:,i)=logical(imfill(e(:,:,i)|bw_caps,'holes'));
@@ -326,7 +335,21 @@ function new_caps = extend_caps_local(bw_caps)
     SE = strel("disk", 1); % structuring element for erosion and dilation
     new_caps = imerode(bw_caps, SE); % intialize new_caps as bw_caps eroded down to 1px
     
-    stats = regionprops(new_caps, "Centroid", "Orientation"); % get centroids and angles of two caps
+    stats = regionprops(new_caps, "Centroid", "Orientation", "Area"); % get centroids, angles, and areas of detected caps regions
+    stats = table2struct(sortrows(struct2table(stats), "Area", "descend")); % sorts regionprops results by descending area
+
+    if length(stats) > 1 % only runs if there are multiple regions
+        for i = length(stats) : -1 : 2 % iterate through regions backwards
+            if (stats(i).Area < 0.2*stats(1).Area)
+                % it's possible that the erosion can leave the regions disconnected 
+                % and result in undesired little regions. this conditional filters 
+                % and deletes any regions whose areas are less than 20% of the largest 
+                % region's area. the 20% is completely arbitary and can be changed 
+                stats(i) = [];
+            end
+        end
+    end
+
     centroids = cat(1, stats.Centroid); % separate centroids into separate matrix
 
     [y_max, x_max] = size(bw_caps); % get max x and y of image
@@ -339,7 +362,8 @@ function new_caps = extend_caps_local(bw_caps)
         xf = @(y) tand(stats(i).Orientation - 90)*(y - centroids(i, 2)) + centroids(i, 1);
         
         endpoints = calculate_endpoints(yf, xf, x_max, y_max); % get intersection points between image borders and current projected line
-    
+        endpoints(sub2ind(size(endpoints), find(endpoints == 0))) = 2; % insertShape seems to not like positions at 0 or 1, so change them to 2
+
         new_caps = insertShape(new_caps, 'line', endpoints); % add current extended cap to new_caps
     end
 
@@ -349,7 +373,7 @@ function new_caps = extend_caps_local(bw_caps)
 
 end
 
-% calculate where the given line will intersect the edges of the image
+%% calculate where the given line will intersect the edges of the image
 function endpoints = calculate_endpoints(yf, xf, x_max, y_max)
     endpoints = [];
 
@@ -384,3 +408,4 @@ function endpoints = calculate_endpoints(yf, xf, x_max, y_max)
         %disp("h2");
     end
 end
+

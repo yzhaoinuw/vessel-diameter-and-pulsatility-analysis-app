@@ -2,7 +2,6 @@ function images = makeSeg(app, images)
 
 %app.SliceProgressPanel.Visible = 'on';
 fillmethod = 'holes';
-app.bw_caps = extend_caps_local(app.bw_caps); % extend caps to edges of image
 app.seg = app.seg | repmat(app.bw_caps,[1 1 size(app.seg, 3)]);
 
 if ~strcmp(fillmethod,'holes') && ~strcmp(fillmethod,'original')
@@ -36,6 +35,8 @@ for i=1:nSlices
             % check for a mask error
             mask2=app.mask;
 %             seg_original=seg(:,:,i);
+            app.e_original(:,:,i) = caps_convhull .* app.e_original(:,:,i); % remove all pixels not inside convex hull of caps
+
             while badseg
                 mask2=imdilate(mask2,strel('disk',1)); 
                 app.e(:,:,i)=(app.e_original(:,:,i).*mask2);
@@ -113,76 +114,4 @@ imagei({images images images},{app.seg app.e})
 
 %app.RunComputationPanel.Visible = 'on'; % gather the user input from panel_2
 
-end
-
-%% caps extension
-function new_caps = extend_caps_local(bw_caps)
-% extend_caps - extends bw_caps to the edges of the image
-%
-% inputs:
-%    - bw_caps - binary image with linear regions as vessel end caps
-%              - bw_caps is expected to come from find_img_edges()
-% outputs:
-%    - new_caps - binary image with caps extended to the edges of the image
-
-    SE = strel("disk", 1); % structuring element for erosion and dilation
-    new_caps = imerode(bw_caps, SE); % intialize new_caps as bw_caps eroded down to 1px
-    
-    stats = regionprops(new_caps, "Centroid", "Orientation"); % get centroids and angles of two caps
-    centroids = cat(1, stats.Centroid); % separate centroids into separate matrix
-
-    [y_max, x_max] = size(bw_caps); % get max x and y of image
-    
-    new_caps = im2double(new_caps); % convert new_caps to double for use with insertShape
-
-    for i = 1 : size(stats) % run for every region detected
-        % yf and xf are the projected lines of the caps based on the stats from regionprops and are algebraically equivalent
-        yf = @(x) (1/tand(stats(i).Orientation - 90))*(x - centroids(i, 1)) + centroids(i, 2);
-        xf = @(y) tand(stats(i).Orientation - 90)*(y - centroids(i, 2)) + centroids(i, 1);
-        
-        endpoints = calculate_endpoints(yf, xf, x_max, y_max); % get intersection points between image borders and current projected line
-    
-        new_caps = insertShape(new_caps, 'line', endpoints); % add current extended cap to new_caps
-    end
-
-    new_caps = mean(new_caps, 3); % combine new_caps back into a 2D image
-    new_caps = imbinarize(new_caps); % convert new_caps back into a binary image
-    new_caps = imdilate(new_caps, SE); % dilate extended caps back to being 3px wide
-
-end
-
-% calculate where the given line will intersect the edges of the image
-function endpoints = calculate_endpoints(yf, xf, x_max, y_max)
-    endpoints = [];
-
-    % math is done based on origin at bottom left
-
-    % left vertical, x = 0 {0 <= y <= y_max}
-    v1_limits = [0, y_max];
-    if (yf(0) >= v1_limits(1) && yf(0) <= v1_limits(2))
-        endpoints(size(endpoints, 1)+1, :) = [0, yf(0)];
-        %disp("v1");
-    end
-
-    % right vertical, x = x_max {0 <= y <= y_max}
-    v2_limits = [0, y_max];
-    if (yf(x_max) >= v2_limits(1) && yf(x_max) <= v2_limits(2))
-        endpoints(size(endpoints, 1)+1, :) = [x_max, yf(x_max)];
-        %disp("v2");
-    end
-    
-
-    % bottom horizontal, y = 0 {0 <= x <= x_max}
-    h1_limits = [0, x_max];
-    if (xf(0) >= h1_limits(1) && xf(0) <= h1_limits(2))
-        endpoints(size(endpoints, 1)+1, :) = [xf(0), 0];
-        %disp("h1");
-    end
-
-    % top horizontal, y = y_max {0 <= x <= x_max}
-    h2_limits = [0, x_max];
-    if (xf(y_max) >= h2_limits(1) && xf(y_max) <= h2_limits(2))
-        endpoints(size(endpoints, 1)+1, :) = [xf(y_max), y_max];
-        %disp("h2");
-    end
 end

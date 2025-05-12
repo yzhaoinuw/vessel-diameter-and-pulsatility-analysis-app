@@ -1,136 +1,1068 @@
-function [imgout]=ci_loadLif(filename,getonlynumberofelements,number,framerange)
-% ci_loadLif - Load Leica Image File Format
-%
-% Based on HKLoadlif by Hiroshi Kawaguchi
-% http://de.mathworks.com/matlabcentral/fileexchange/36005-leica-image-format-file-loader
-%
-% [imgout]=ci_loadLif('filename', getonlynumberofelements,
-% number,framerange) loads an image (series) from a Leica Image File
-% imgout =
-%               Image: {[1024x1024x101 uint8]}
-%                Info: [1x1 struct]
-%                Name: 'loc1'
-%                Type: 'X-Y-Z'
-%     NumberOfChannel: 1
-%                Size: '1024  1024   101'
-%
-% diplibtensor=dip_image(imgout.Image); gives dipimage Tensor Image
-% diplibimage=array2im(diplibtensor); gives nCh image
-% channelimage=diplibimage(:,:,:,ch); gives ch image
+function [imgout] = ci_loadLif(filename, getonlynumberofelements, input_channel, framerange, parallel)
+    % ci_loadLif - Load Leica Image File Format
+    %
+    % Based on CI-ImagingLIF, Access Leica LIF and XLEF Files by Ron Hoebe
+    % https://www.mathworks.com/matlabcentral/fileexchange/48774-ci-imaginglif-access-leica-lif-and-xlef-files
+    % https://github.com/Cellular-Imaging-Amsterdam-UMC/CI-ImagingLIF
+    %
+    % [imgout] = loadLif_tb2(filename, getonlynumberofelements, input_channel, framerange, parallel)
+    % loads a series of images from a Leica Image File. 
+    %
+    % Make sure to have xml2structstring.mexa64 (Linux only) on path when running. This function works
+    % without it but will run much slower.
+    %
+    % inputs:
+    %   filename - name of .lif file
+    %   getonlynumberofelements - returns only the number of elements in file. defaults to 0
+    %   input_channel - specific channel to retrieve images from. defaults to 1
+    %   framerange - specify the range of frames to retrieve (inclusive). can take 2 element vector and 
+    %       single frame inputs. defaults to all frames in channel. can also take '0' to default to all 
+    %   parallel - uses parfor loop when true. defaults to false/series for-loop
+    % outputs:
+    %   imgout - either the series of images or number of elements
+    %    imgout =
+    %               Image: {[1024x1024x101 uint8]}
+    %                Info: [1x1 struct]
+    %                Name: 'loc1'
+    %                Type: 'X-Y-Z'
+    %     NumberOfChannel: 1
+    %     AllocatedFrames: '101'
+    %         SeriesNames: [1x38 cell]
 
-%
-% History
-% Version 1.0
-% Some LAS-AF 4.x files give errors, fixed in LAS-X
+  
 
-% (c) Ron Hoebe
-% Cellular Imaging - Core Facility
-% AMC - UvA - Amsterdam - The Netherlands
+    % History
+    % Updated 13 September 2018 by Doug Kelley to include framerange input. 
+    % Updated 16 September 2018 to output imgout.Info.Dimensions(3) consistent
+    % with framerange. 
+    % Updated 17 September 2018 to output total frame count in
+    % imgout.AllocatedFrames. 
+    % Updated 24 May 2021 to output imgout.Info.SeriesNames.
+    % Updated 25 June 2024 by Taylor Bayarerdene: major overhaul. Function
+    % runs much faster and no longer needs enough memory to load in the entire .lif file.
+    % Updated 3 October 2024 by Doug Kelley for compatibility with files
+    % that lack some metadata. Also fixed framerange. 
 
-% Updated 13 September 2018 by Doug Kelley to include framerange input. 
-% Updated 16 September 2018 to output imgout.Info.Dimensions(3) consistent
-% with framerange. 
-% Updated 17 September 2018 to output total frame count in
-% imgout.AllocatedFrames. 
-% Updated 24 May 2021 to output imgout.Info.SeriesNames.
+    % Next: mine more information from iminfo!
 
-%% Main function
-
-framerange_default=[1 inf];
-
-if nargin==0
-    [filename, pathname]=uigetfile({'*.lif','Leica Image Format (*.lif)'});
-    if filename==0; return; end
-    filename=[pathname filename];
-    getonlynumberofelements=false;
-    number=1;
-end
-if ~exist('framerange','var') || isempty(framerange)
-    framerange=framerange_default;
-elseif numel(framerange)==1
-    framerange=framerange*[1 1];
-end
-
-fp=fopen(filename,'r');
-
-% Reading XML Part
-[fp, xmlHdrStr] = ReadXMLPart(fp);
-
-% xmlList is cell array (n x 5)
-% rank(double) name(string) attributes(cell(n,2)) parant(double) children(double array)
-% Changing XML to Cell
-xmlList=XMLtxt2cell(xmlHdrStr);
-lifVersion = GetLifVersion(xmlList(1,:)); % lifVersion is double scalar
-
-% Reading Image Info
-imgList = GetImageDescriptionList(xmlList);% imgList is struct vector
-% memoryList is cell array (n x 4)
-% ID(string), startPoint(uint64), sizeOfMemory, Index(double)
-imgList  = ReadObjectMemoryBlocks(fp,lifVersion,imgList);
-fclose(fp);
-
-if exist('getonlynumberofelements', 'var')
-    if getonlynumberofelements
-        imgout=numel(imgList);
-        return
+    % if no inputs are provided, prompt user to select file from file explorer
+    if nargin==0
+        [filename, pathname]=uigetfile({'*.lif','Leica Image Format (*.lif)'});
+        if filename==0; return; end
+        filename=[pathname filename];
+        getonlynumberofelements=false;
+        input_channel=1;
     end
-end
-   
-dat=cell(numel(imgList),5);
-for n=1:numel(imgList)
-    dat{n,1}=imgList(n).Name;           % Name of image
-    dat{n,2}=numel(imgList(n).Channels);% number of channel
-    [dimType, dimSize]=GetDimensionInfo(imgList(n).Dimensions);
-    dat{n,3}=dimType;
-    dat{n,4}=int2str(dimSize');
-    dat{n,5}=false;
-end
 
-if exist('number', 'var')
-    if number<=numel(imgList)
-        n=number;
-    elseif number<1
-        error('Series number too low')
+    % throw error if the provided filename does not have .lif in it
+    % matlab throws a more ambiguous error otherwise
+    if ~contains(filename, '.lif')
+        error('Please make sure filename contains .lif.');
+    elseif ~isfile(filename)
+        error([filename ' could not be found, check filename or path again.']);
+    end
+
+    if ~exist('input_channel', 'var') % defaults first channel
+        input_channel = 1; 
+    end
+
+
+    %app.Tree.Enable='off';
+    %app.Node.delete
+    fileID = fopen(filename,'r','n','UTF-8');
+    testvalue=fread(fileID,1,'int32');
+    if testvalue~=112; return; end 
+    XMLContentLenght=fread(fileID,1,'int32'); %#ok<NASGU> 
+    testvalue = fread(fileID,1,'uint8');
+    if testvalue~=42; return; end 
+    testvalue=fread(fileID,1,'int32');
+    uc=reshape(fread(fileID,2*testvalue,'*char'),1,testvalue*2);
+    XMLObjDescription=cfUnicode2ascii(uc);
+    XMLObjDescription=regexprep(XMLObjDescription,'</',[newline '</']);
+    %Remove error from GSD LIF File
+    errstrings=extractBetween(XMLObjDescription,'High resolution image created from &quot;','&quot;.');
+    XMLObjDescription=replace(XMLObjDescription,errstrings,'');
+    
+    %Read memory blocks
+    lifinfo=struct;
+    tel=0;
+    while ~feof(fileID)
+        tel=tel+1;
+        testvalue=fread(fileID,1,'int32');
+        if feof(fileID); break; end
+        if testvalue ~=112; return; end
+        BinContentLenght=fread(fileID,1,'int32'); %#ok<NASGU> 
+        testvalue = fread(fileID,1,'uint8');
+        if testvalue~=42; return; end 
+        MemorySize=fread(fileID,1,'int64');
+        testvalue = fread(fileID,1,'uint8');
+        if testvalue~=42; return; end 
+        testvalue=fread(fileID,1,'int32');
+        sBlockID=cfUnicode2ascii(reshape(fread(fileID,2*testvalue,'*char'),1,testvalue*2));
+        lifinfo(tel).BlockID=sBlockID;
+        lifinfo(tel).MemorySize=MemorySize;
+        lifinfo(tel).Position=ftell(fileID);
+        if MemorySize>0; fseek(fileID,MemorySize,0); end
+    end
+    fclose(fileID);
+    %setLogD(app,'Opening LIF-File');
+    %disp("Opening " + filename);
+
+    if (exist('xml2struct.mexa64', 'file') ~= 0) % checks for the file with the compiled function (linux version)
+        %disp('found');
+        s=xml2structstring(['<?xml version="1.0" encoding="ISO-8859-1"?>' XMLObjDescription]);
+    else % runs using the slower local function
+        %disp('not found');
+        warning('Using slower local function. Please add xml2struct.mexa64 to path for faster processing');
+        s=cfXML2struct(['<?xml version="1.0" encoding="ISO-8859-1"?>' XMLObjDescription]);
+    end
+
+    %app.Node = uitreenode(app.Tree,'Text',app.filename,'NodeData',fileparts(app.file), 'Icon','LAS-X.png','Tag','File');
+    %setLogD(app,'LAS-X LIF File Opened');
+    %disp(filename + " opened");
+    cnode=0;
+    elements=numel(s.LMSDataContainerHeader.Element.Children.Element);
+
+    if exist('getonlynumberofelements', 'var') && (getonlynumberofelements)
+        imgout = elements;
+        return;
+    end
+
+    filetype = '.lif';
+    %setLogD(app,[num2str(elements) ' root nodes found, scanning...']);
+    %disp(string(elements) + " root nodes found, scanning...");
+    for k = 1:elements
+        cnode=cnode+1;
+        if elements==1
+            thiselement=s.LMSDataContainerHeader.Element.Children.Element;
+        else
+            thiselement=s.LMSDataContainerHeader.Element.Children.Element{k};
+        end
+        MemoryBlockID=thiselement.Memory.Attributes.MemoryBlockID;
+        lifinfoindex=find(strcmpi({lifinfo.BlockID},MemoryBlockID)==1);
+        MemorySize=str2double(thiselement.Memory.Attributes.Size);
+        name=thiselement.Attributes.Name;
+%                 lifinfo(lifinfoindex).filetype=app.filetype;
+%                 lifinfo(lifinfoindex).filepath=app.filepath;
+%                 lifinfo(lifinfoindex).LIFFile=app.file;
+        lifinfo(lifinfoindex).filetype = filetype;
+        lifinfo(lifinfoindex).LIFFile = filename;
+        lifinfo(lifinfoindex).name=name;
+        if MemorySize==0 && ~contains(name,'iomanagerconfiguation','IgnoreCase',true)
+            app.Nodes(cnode)=uitreenode(app.Node,'Text',name,'NodeData',name,'Icon','folder.png','Tag','Folder');
+            elements1=numel(thiselement.Children.Element);
+            cnode1=cnode;
+            for k1 = 1:elements1
+                cnode=cnode+1;
+                if elements1==1
+                    thiselement1 = thiselement.Children.Element;
+                else
+                    thiselement1 = thiselement.Children.Element{k1};
+                end
+                MemoryBlockID=thiselement1.Memory.Attributes.MemoryBlockID;
+                lifinfoindex=find(strcmpi({lifinfo.BlockID},MemoryBlockID)==1);
+                MemorySize=str2double(thiselement1.Memory.Attributes.Size);
+                name1=thiselement1.Attributes.Name;
+                lifinfo(lifinfoindex).filetype=app.filetype;
+                lifinfo(lifinfoindex).filepath=app.filepath;
+                lifinfo(lifinfoindex).LIFFile=app.file;
+                lifinfo(lifinfoindex).name=name1;
+                if MemorySize==0 && ~contains(name,'iomanagerconfiguation','IgnoreCase',true)
+                    app.Nodes(cnode)=uitreenode(app.Nodes(cnode1),'Text',name1,'NodeData',name1,'Icon','folder.png','Tag','Folder');
+                    elements2=numel(thiselement1.Children.Element);
+                    cnode2=cnode;
+                    for k2 = 1:elements2
+                        cnode=cnode+1;
+                        if elements2==1
+                            thiselement2 = thiselement1.Children.Element;
+                        else
+                            thiselement2 = thiselement1.Children.Element{k2};
+                        end
+                        MemoryBlockID=thiselement2.Memory.Attributes.MemoryBlockID;
+                        lifinfoindex=find(strcmpi({lifinfo.BlockID},MemoryBlockID)==1);
+                        MemorySize=str2double(thiselement2.Memory.Attributes.Size);
+                        name2=thiselement2.Attributes.Name;
+                        lifinfo(lifinfoindex).name=name2;
+                        if MemorySize==0 && ~contains(name,'iomanagerconfiguation','IgnoreCase',true)
+                            app.Nodes(cnode)=uitreenode(app.Nodes(cnode2),'Text',name2,'NodeData',name2,'Icon','folder.png','Tag','Folder');
+                            elements3=numel(thiselement2.Children.Element);
+                            cnode3=cnode;
+                            for k3 = 1:elements3
+                                cnode=cnode+1;
+                                if elements3==1
+                                    thiselement3 = thiselement2.Children.Element;
+                                else
+                                    thiselement3 = thiselement2.Children.Element{k3};
+                                end
+                                MemoryBlockID=thiselement3.Memory.Attributes.MemoryBlockID;
+                                lifinfoindex=find(strcmpi({lifinfo.BlockID},MemoryBlockID)==1);
+                                MemorySize=str2double(thiselement3.Memory.Attributes.Size);
+                                name3=thiselement3.Attributes.Name;
+                                lifinfo(lifinfoindex).name=name3;
+                                if MemorySize==0 && ~contains(name,'iomanagerconfiguation','IgnoreCase',true)
+                                    app.Nodes(cnode)=uitreenode(app.Nodes(cnode3),'Text',name3,'NodeData',name3,'Icon','folder.png','Tag','Folder');
+                                elseif ~contains(name3,'iomanagerconfiguation','IgnoreCase',true) && ~contains(name3,'environmentalgraph','IgnoreCase',true)
+                                    lifinfo(lifinfoindex).filetype=app.filetype;
+                                    lifinfo(lifinfoindex).filepath=app.filepath;
+                                    lifinfo(lifinfoindex).LIFFile=app.file;
+                                    lifinfo(lifinfoindex).name=name3;
+                                    if isfield(thiselement3.Data,'Image') 
+                                        lifinfo(lifinfoindex).datatype='Image';
+                                        lifinfo(lifinfoindex).Image=thiselement3.Data.Image;
+                                    elseif isfield(thiselement3.Data,'GISTEventList')
+                                        lifinfo(lifinfoindex).datatype='Eventlist';
+                                        lifinfo(lifinfoindex).GISTEventList=thiselement3.Data.GISTEventList;
+                                    else
+                                        lifinfo(lifinfoindex).datatype='unknown';
+                                    end
+                                    lifinfo(lifinfoindex).Parent=[app.Nodes(cnode3).Parent.Parent.Text '_' app.Nodes(cnode3).Parent.Text '_' app.Nodes(cnode3).Text];
+                                    app.Nodes(cnode)=uitreenode(app.Nodes(cnode3),'Text',name3,'NodeData',{name3, lifinfo(lifinfoindex)},'Icon','image.png','Tag',lifinfo(lifinfoindex).datatype,'UserData',cnode);
+                                else
+                                    cnode=cnode-1;
+                                end
+                            end
+                        elseif ~contains(name2,'iomanagerconfiguation','IgnoreCase',true) && ~contains(name2,'environmentalgraph','IgnoreCase',true)
+                            lifinfo(lifinfoindex).filetype=app.filetype;
+                            lifinfo(lifinfoindex).filepath=app.filepath;
+                            lifinfo(lifinfoindex).LIFFile=app.file;
+                            lifinfo(lifinfoindex).name=name2;
+                            if isfield(thiselement2.Data,'Image') 
+                                lifinfo(lifinfoindex).datatype='Image';
+                                lifinfo(lifinfoindex).Image=thiselement2.Data.Image;
+                            elseif isfield(thiselement2.Data,'GISTEventList')
+                                lifinfo(lifinfoindex).datatype='Eventlist';
+                                lifinfo(lifinfoindex).GISTEventList=thiselement2.Data.GISTEventList;
+                            else
+                                lifinfo(lifinfoindex).datatype='unknown';
+                            end
+                            lifinfo(lifinfoindex).Parent=[app.Nodes(cnode2).Parent.Text '_' app.Nodes(cnode2).Text];
+                            app.Nodes(cnode)=uitreenode(app.Nodes(cnode2),'Text',name2,'NodeData',{name2, lifinfo(lifinfoindex)},'Icon','image.png','Tag',lifinfo(lifinfoindex).datatype,'UserData',cnode);
+                        else
+                            cnode=cnode-1;
+                        end
+                    end
+                elseif ~contains(name1,'iomanagerconfiguation','IgnoreCase',true) && ~contains(name1,'environmentalgraph','IgnoreCase',true)
+                    if isfield(thiselement1.Data,'Image') 
+                        lifinfo(lifinfoindex).datatype='Image';
+                        lifinfo(lifinfoindex).Image=thiselement1.Data.Image;
+                    elseif isfield(thiselement1.Data,'GISTEventList')
+                        lifinfo(lifinfoindex).datatype='Eventlist';
+                        lifinfo(lifinfoindex).GISTEventList=thiselement1.Data.GISTEventList;
+                    else
+                        lifinfo(lifinfoindex).datatype='unknown';
+                    end
+                    lifinfo(lifinfoindex).Parent=app.Nodes(cnode1).Text;
+                    app.Nodes(cnode)=uitreenode(app.Nodes(cnode1),'Text',name1,'NodeData',{name1, lifinfo(lifinfoindex)},'Icon','image.png','Tag',lifinfo(lifinfoindex).datatype,'UserData',cnode);
+                else
+                    cnode=cnode-1;
+                end
+            end
+        elseif ~contains(name,'iomanagerconfiguation','IgnoreCase',true) && ~contains(name,'environmentalgraph','IgnoreCase',true)
+            if isfield(thiselement.Data,'Image') 
+                lifinfo(lifinfoindex).datatype='Image';
+                lifinfo(lifinfoindex).Image=thiselement.Data.Image;
+            elseif isfield(thiselement.Data,'GISTEventList')
+                lifinfo(lifinfoindex).datatype='Eventlist';
+                lifinfo(lifinfoindex).GISTEventList=thiselement.Data.GISTEventList;
+            else
+                lifinfo(lifinfoindex).datatype='unknown';
+            end
+            lifinfo(lifinfoindex).Parent='';
+            %    app.Nodes(cnode)=uitreenode(app.Node,'Text',name,'NodeData',{name, lifinfo(lifinfoindex)},'Icon','image.png','Tag',lifinfo(lifinfoindex).datatype,'UserData',cnode);
+        else
+            cnode=cnode-1;
+        end
+    end
+    
+    %setLogD(app,'Ready reading LIF file');
+    %disp("Ready reading LIF file");
+    %app.Tree.Enable='on';
+    %expand(app.Tree,'all');
+
+
+    channel = length(lifinfo) - elements + input_channel; % actual Series number
+    
+    if (strcmpi(lifinfo(channel).datatype,'Image'))
+%             lifinfo(channel).filetype = '.lif';
+%             lifinfo(channel).LIFFile = filename;
+            [result, serror, iminfo] = cfReadMetaData(lifinfo(channel)); %#ok<ASGLU> 
+
+            num_frames = str2double(lifinfo(channel).Image.ImageDescription.Dimensions.DimensionDescription{1, end}.Attributes.NumberOfElements);
+%                     imgout_new = zeros(340, 304, num_frames);
+%                     for i = 1 : num_frames
+%                         imgout_new(:, :, i) = cfReadIm(lifinfo(channel), iminfo, channel, 1, i, 1);
+%                     end
+
+            if ~exist('framerange','var') || isempty(framerange) % default framerange to all frames
+                framerange_default=[1 num_frames];
+                framerange=framerange_default;
+            elseif numel(framerange)==1 % make single input into a two element vector
+                framerange=framerange*[1 1];
+            end
+            framerange(1) = max(framerange(1),1); % no frame before #1
+            framerange(2) = min(framerange(2),iminfo.ts); % no frame after end of movie
+            Nf = diff(framerange)+1; % number of frames to be read
+
+            imgs = cfReadIm(lifinfo(channel), iminfo, channel, 1, 1, 1);
+            imgs = zeros(size(imgs, 1), size(imgs, 2), Nf, class(imgs));
+            if exist('parallel', 'var') && (parallel == 1) % only uses parfor if explicitly stated
+                parfor i = 1:Nf
+                    imgs(:, :, i) = cfReadIm(lifinfo(channel), ...
+                        iminfo, channel, 1, framerange(1)+i-1, 1);
+                end
+            else % defaults to series for-loop
+                for i = 1:Nf
+                    imgs(:, :, i) = cfReadIm(lifinfo(channel), ...
+                        iminfo, channel, 1, framerange(1)+i-1, 1);
+                end
+            end
+            
+            imgout = struct;
+            imgout.Image = {permute(imgs, [2, 1, 3])};
+            imgout.Info = struct;
+                imgout.Info.Name = lifinfo(channel).name;
+                imgout.Info.Channels = lifinfo(channel).Image.ImageDescription.Channels.ChannelDescription.Attributes;
+                for dim = 1 : length(lifinfo(channel).Image.ImageDescription.Dimensions.DimensionDescription)
+                    imgout.Info.Dimensions(dim, 1) = lifinfo(channel).Image.ImageDescription.Dimensions.DimensionDescription{1, dim}.Attributes;
+                end
+                imgout.Info.Memory.Size = lifinfo(channel).MemorySize;
+                imgout.Info.Memory.MemoryBlockID = lifinfo(channel).BlockID;
+                imgout.Info.Memory.StartPosition = lifinfo(channel).Position;
+            imgout.Name = lifinfo(channel).name;
+            imgout.Type = GetDimensionInfo(imgout.Info.Dimensions);
+            imgout.NumberOfChannel = length(channel);
+            imgout.AllocatedFrames = num2str(imgout.Info.Dimensions(end).NumberOfElements);
+            for series = (length(lifinfo)-elements) : elements
+                imgout.SeriesNames(1, series) = {lifinfo(series+1).name};
+            end
+
+%             imgout.lifinfo = lifinfo;
+%             imgout.iminfo = iminfo;
+            %disp("Loaded " + num_frames + " frames from channel " + input_channel);
+
+
+            % cfReadIm(lifinfo, iminfo, channel, z, t, tile)
+            % cfReadIm3D(lifinfo, iminfo, channel, zstart, zend, t, tile)
+            % im=cfReadIm3D(lifinfo,iminfo,ch,1,iminfo.zs,app.TimeSlider.Value,app.TileSlider.Value);
     else
-        error('Series number too high')
+        error(['Series ' num2str(input_channel) ' contains no image data.'])
+    end % if (strcmpi(lifinfo(channel).datatype,'Image'))
+end % function ci_loadLif
+
+
+%%
+function asciistring = cfUnicode2ascii(utfstring)
+    %UNICODE2ASCII Converts unicode endcoded files to ASCII encoded files
+    %  ASCIISTRING = UNICODE2ASCII(UTFSTRING)
+    %  Converts the UTFSTRING to ASCII and returns the string.
+
+    % check number of arguments and open ustring handles
+
+    ustring = utfstring;
+
+    % read the ustring and delete unicode characters
+    unicode = isunicode(ustring);
+
+    % delete header
+    switch(unicode)
+        case 1
+            ustring(1:3) = [];
+        case 2
+            ustring(1:2) = [];
+        case 3
+            ustring(1:2) = [];
+        case 4
+            ustring(1:4) = [];
+        case 5
+            ustring(1:4) = [];
     end
+
+    % deletes all 0 bytes
+    ustring(ustring == 0) = [];
+    asciistring = ustring;
+    return;
+end
+
+
+%%
+function isuc = isunicode(utfstring)
+%     ISUNICODE Checks if and which unicode header a string has.
+%      ISUC is true if the ustring contains unicode characters, otherwise
+%      false. Exact Information about the encoding is also given.
+%      ISUC == 0: No UTF Header
+%      ISUC == 1: UTF-8
+%      ISUC == 2: UTF-16BE
+%      ISUC == 3: UTF-16LE
+%      ISUC == 4: UTF-32BE
+%      ISUC == 5: UTF-32LE
+
+    isuc = false;
+    firstLine = utfstring(1:4);
+
+    %assign all possible headers to variables
+    utf8header    = [hex2dec('EF') hex2dec('BB') hex2dec('BF')];
+    utf16beheader = [hex2dec('FE') hex2dec('FF')];
+    utf16leheader = [hex2dec('FF') hex2dec('FE')];
+    utf32beheader = [hex2dec('00') hex2dec('00') hex2dec('FE') hex2dec('FF')];
+    utf32leheader = [hex2dec('FF') hex2dec('FE') hex2dec('00') hex2dec('00')];
+
+    %compare first bytes with header
+    if(strfind(firstLine, utf8header) == 1)
+        isuc = 1;
+    elseif(strfind(firstLine, utf16beheader) == 1)
+        isuc = 2;
+    elseif(strfind(firstLine, utf16leheader) == 1)
+        isuc = 3;
+    elseif(strfind(firstLine, utf32beheader) == 1)
+        isuc = 4;
+    elseif(strfind(firstLine, utf32leheader) == 1)
+        isuc = 5;
+    end
+
+    if(~exist('firstLine', 'var'))
+        fclose(fin);
+    end
+end
+
+
+%%
+function [result, serror, iminfo] = cfReadMetaData(lifinfo)
+    %Reading MetaData (Leica LAS-X)
+    if strcmpi(lifinfo.datatype,'image')
+        iminfo.xs=0;                     % imwidth
+        iminfo.xbytesinc=0;
+        iminfo.ys=0;                     % imheight
+        iminfo.ybytesinc=0;
+        iminfo.zs=0;                     % slices (stack)
+        iminfo.zbytesinc=0;
+        iminfo.ts=1;                     % time
+        iminfo.tbytesinc=0;
+        iminfo.tiles=0;                  % tiles
+        iminfo.tilesbytesinc=0;
+        iminfo.xres=0;                   % resolution x
+        iminfo.yres=0;                   % resolution y
+        iminfo.zres=0;                   % resolution z
+        iminfo.tres=0;                   % time interval (from timestamps)
+        iminfo.timestamps=[];            % Timestamps t
+        iminfo.resunit='';               % resulution unit
+        iminfo.xres2=0;                  % resolution x in µm
+        iminfo.yres2=0;                  % resolution y in µm
+        iminfo.zres2=0;                  % resolution z in µm
+        iminfo.resunit2='µm';            % resulution unit in µm
+        iminfo.lutname=cell(10,1);
+        iminfo.channels=1;
+        iminfo.isrgb=false;
+        iminfo.channelResolution=zeros(1000,1); % was originally zeros(10, 1)
+        iminfo.channelbytesinc=zeros(1000,1); % was originally zeros(10, 1)
+        iminfo.filterblock=strings(10,1);
+        iminfo.excitation=zeros(10,1);
+        iminfo.emission=zeros(10,1);
+        iminfo.sn=zeros(10,1);
+        iminfo.mictype='';
+        iminfo.mictype2='';
+        iminfo.objective='';
+        iminfo.na=0;
+        iminfo.refractiveindex=0;
+        iminfo.pinholeradius=250;
+
+        serror='';
+        
+        %Channels
+        xmlInfo = lifinfo.Image.ImageDescription.Channels.ChannelDescription;
+        iminfo.channels=numel(xmlInfo);
+        if iminfo.channels>1
+            iminfo.isrgb=(str2double(char(xmlInfo{1}.Attributes.ChannelTag))~=0);
+        end
+        for k = 1:iminfo.channels
+            if iminfo.channels>1
+                iminfo.channelbytesinc(k)=str2double(char(xmlInfo{k}.Attributes.BytesInc));
+                iminfo.channelResolution(k)=str2double(char(xmlInfo{k}.Attributes.Resolution));
+                iminfo.lutname{k}=lower(char(xmlInfo{k}.Attributes.LUTName));
+            else
+                iminfo.channelbytesinc(k)=str2double(char(xmlInfo.Attributes.BytesInc));
+                iminfo.channelResolution(k)=str2double(char(xmlInfo.Attributes.Resolution));
+                iminfo.lutname{k}=lower(char(xmlInfo.Attributes.LUTName));
+            end
+        end
+        %Dimensions and size
+        iminfo.zs=1;
+        xmlInfo = lifinfo.Image.ImageDescription.Dimensions.DimensionDescription;
+        for k = 1:numel(xmlInfo)
+            dim=str2double(xmlInfo{k}.Attributes.DimID);
+            switch dim
+                case 1
+                    iminfo.xs=str2double(xmlInfo{k}.Attributes.NumberOfElements);
+                    iminfo.xres=str2double(xmlInfo{k}.Attributes.Length)/(iminfo.xs-1);
+                    iminfo.xbytesinc=str2double(xmlInfo{k}.Attributes.BytesInc');
+                    iminfo.resunit=char(xmlInfo{k}.Attributes.Unit);
+                case 2
+                    iminfo.ys=str2double(xmlInfo{k}.Attributes.NumberOfElements);
+                    iminfo.yres=str2double(xmlInfo{k}.Attributes.Length)/(iminfo.ys-1);
+                    iminfo.ybytesinc=str2double(xmlInfo{k}.Attributes.BytesInc');
+                case 3
+                    iminfo.zs=str2double(xmlInfo{k}.Attributes.NumberOfElements);
+                    iminfo.zres=str2double(xmlInfo{k}.Attributes.Length)/(iminfo.zs-1);
+                    iminfo.zbytesinc=str2double(xmlInfo{k}.Attributes.BytesInc');
+                case 4
+                    iminfo.ts=str2double(xmlInfo{k}.Attributes.NumberOfElements);
+                    iminfo.tres=str2double(xmlInfo{k}.Attributes.Length)/(iminfo.ts-1);
+                    iminfo.tbytesinc=str2double(xmlInfo{k}.Attributes.BytesInc');
+                case 10
+                    iminfo.tiles=str2double(xmlInfo{k}.Attributes.NumberOfElements);
+                    iminfo.tilesbytesinc=str2double(xmlInfo{k}.Attributes.BytesInc');
+            end
+        end
+        
+        %TimeStamps
+        if iminfo.ts>1
+            %Get Timestamps and number of timestamps
+            xmlInfo = lifinfo.Image.TimeStampList;
+            if isfield(xmlInfo,'Attributes')
+                lifinfo.numberoftimestamps=str2double(xmlInfo.Attributes.NumberOfTimeStamps);
+                if lifinfo.numberoftimestamps>0
+                    %Convert to date and time
+                    ts=split(xmlInfo.Text,' ');
+                    ts=ts(1:end-1);
+                    tsd=datetime(datestr(now()),'TimeZone','Europe/Zurich');
+                    for t=1:numel(ts)
+                        tsd(t)=datetime(uint64(str2double(['0x' ts{t}])),'ConvertFrom','ntfs','TimeZone','Europe/Zurich');
+                    end
+                    %??? Timestamps ???
+                    if iminfo.ts*iminfo.channels==lifinfo.numberoftimestamps
+                        t=tsd(end-(iminfo.channels-1))-tsd(1);
+                        iminfo.tres=seconds(t/(iminfo.ts-1));                
+                    elseif iminfo.ts*iminfo.channels<lifinfo.numberoftimestamps
+                        %Find Average Duration between events;
+                        if iminfo.tiles>0
+                            [~,a]=findpeaks(histcounts(tsd,iminfo.ts*iminfo.zs*iminfo.tiles));
+                            c=numel(tsd)/(iminfo.ts*iminfo.zs*iminfo.tiles);
+                            t=tsd(floor(a(end)*c))-tsd(floor(a(1)*c));
+                        else
+                            [~,a]=findpeaks(histcounts(tsd,iminfo.ts*iminfo.zs));
+                            c=numel(tsd)/(iminfo.ts*iminfo.zs);
+                            t=tsd(floor(a(end)*c))-tsd(floor(a(1)*c));
+                        end
+                        iminfo.tres=seconds(t/numel(a));
+                    end
+                end
+            else % SP5??
+                if isfield(xmlInfo,'TimeStamp')
+                    lifinfo.numberoftimestamps=numel(xmlInfo.TimeStamp);
+                end
+            end
+        end
+        
+        %Positions
+        if iminfo.tiles>1
+            if size(lifinfo.Image.Attachment,2)>=1
+                if size(lifinfo.Image.Attachment,2)>1
+                    for i=1:numel(lifinfo.Image.Attachment)
+                        if strcmp(lifinfo.Image.Attachment{i}.Attributes.Name,'TileScanInfo')
+                            xmlInfo = lifinfo.Image.Attachment{i};
+                            break;
+                        end
+                    end
+                elseif size(lifinfo.Image.Attachment,2)==1
+                    if strcmp(lifinfo.Image.Attachment.Attributes.Name,'TileScanInfo')
+                        xmlInfo = lifinfo.Image.Attachment;
+                    end
+                end
+                for i=1:iminfo.tiles
+                    iminfo.tile(i).num=i;
+                    iminfo.tile(i).fieldx=str2double(xmlInfo.Tile{i}.Attributes.FieldX);
+                    iminfo.tile(i).fieldy=str2double(xmlInfo.Tile{i}.Attributes.FieldY);
+                    iminfo.tile(i).posx=str2double(xmlInfo.Tile{i}.Attributes.PosX);
+                    iminfo.tile(i).posy=str2double(xmlInfo.Tile{i}.Attributes.PosY);
+                end
+                iminfo.tilex=struct;
+                iminfo.tilex.xmin=min([iminfo.tile.posx]);
+                iminfo.tilex.ymin=min([iminfo.tile.posy]);
+                iminfo.tilex.xmax=max([iminfo.tile.posx]);
+                iminfo.tilex.ymax=max([iminfo.tile.posy]);
+            end
+        end
+        
+        %Mic Type
+        if isfield(lifinfo.Image,'Attachment')
+            xmlInfo = lifinfo.Image.Attachment;
+            for k = 1:numel(xmlInfo)
+                if numel(xmlInfo)==1
+                    xli=xmlInfo;
+                else
+                    xli=xmlInfo{k}; 
+                end
+                name=xli.Attributes.Name; 
+                switch name
+                    case 'HardwareSetting'
+                        if strcmpi(xli.Attributes.DataSourceTypeName,'Confocal')
+                            iminfo.mictype='IncohConfMicr';
+                            iminfo.mictype2='confocal';
+                            %Objective specs
+                            thisInfo = xli.ATLConfocalSettingDefinition.Attributes;
+                            iminfo.objective=thisInfo.ObjectiveName;  
+                            iminfo.na=str2double(thisInfo.NumericalAperture);  
+                            iminfo.refractiveindex=str2double(thisInfo.RefractionIndex');  
+                            %Channel Excitation and Emission
+                            thisInfo = xli.ATLConfocalSettingDefinition.Spectro;
+                            for k1 = 1:numel(thisInfo.MultiBand)
+                                iminfo.emission(k1)= str2double(thisInfo.MultiBand{k1}.Attributes.LeftWorld)+(str2double(thisInfo.MultiBand{k1}.Attributes.RightWorld)-str2double(thisInfo.MultiBand{k1}.Attributes.LeftWorld))/2;
+                                iminfo.excitation(k1)= iminfo.emission(k1)-10;
+                            end
+                        elseif strcmpi(xli.Attributes.DataSourceTypeName,'Camera')
+                            iminfo.mictype='IncohWFMicr';
+                            iminfo.mictype2='widefield';
+                        else
+                            iminfo.mictype='unknown';
+                            iminfo.mictype2='generic';
+                        end
+                        break;
+                    case 'HardwareSettingList'
+                        if strcmpi(xli.HardwareSetting.ScannerSetting.ScannerSettingRecord{1}.Attributes.Variant,'TCS SP5')
+                            iminfo.mictype='IncohConfMicr';
+                            iminfo.mictype2='confocal';
+                            %Objective specs
+                            iminfo.objective='HCX APO L U-V-I 63.0x0.90 WATER UV';  
+                            iminfo.na=0.90;  
+                            iminfo.refractiveindex=1.33;  
+                            %Channel Excitation and Emission
+                            for k1 = 1:1
+                                iminfo.emission(1)= 520;
+                                iminfo.excitation(1)= 488;
+                            end
+                        else
+                            iminfo.mictype='unknown';
+                            iminfo.mictype2='generic';
+                        end
+                        break;
+                end
+            end 
+        else
+            iminfo.mictype='unknown';
+            iminfo.mictype2='generic';
+        end
+        %Widefield
+        if strcmpi(iminfo.mictype,'IncohWFMicr')
+            %Objective specs
+            thisInfo = xli.ATLCameraSettingDefinition.Attributes;
+            if isfield(iminfo,'ObjectiveName')
+                iminfo.objective=thisInfo.ObjectiveName;  
+            end
+            if isfield(iminfo,'NumericalAperture')
+                iminfo.na=str2double(thisInfo.NumericalAperture);  
+            end
+            if isfield(iminfo,'RefractionIndex')
+                iminfo.refractiveindex=str2double(thisInfo.RefractionIndex');  
+            end
+
+            %Channel Excitation and Emission
+            if isfield(xli.ATLCameraSettingDefinition,'WideFieldChannelConfigurator')
+                thisInfo = xli.ATLCameraSettingDefinition.WideFieldChannelConfigurator;
+                for k = 1:numel(thisInfo.WideFieldChannelInfo)
+                    if numel(thisInfo.WideFieldChannelInfo)==1
+                        FluoCubeName=thisInfo.WideFieldChannelInfo.Attributes.FluoCubeName;            
+                    else
+                        FluoCubeName=thisInfo.WideFieldChannelInfo{k}.Attributes.FluoCubeName;            
+                    end
+                    if numel(thisInfo.WideFieldChannelInfo)==1
+                        if strcmpi(FluoCubeName,'QUAD-S')
+                            ExName=thisInfo.WideFieldChannelInfo.Attributes.FFW_Excitation1FilterName;
+                            iminfo.filterblock(k)=[FluoCubeName ': ' ExName];
+                        elseif strcmpi(FluoCubeName,'DA/FI/TX')
+                            ExName=thisInfo.WideFieldChannelInfo.Attributes.LUT;
+                            iminfo.filterblock(k)=[FluoCubeName ': ' ExName];
+                        else
+                            ExName=FluoCubeName;
+                            iminfo.filterblock(k)=FluoCubeName;
+                        end
+                    else
+                        if strcmpi(FluoCubeName,'QUAD-S')
+                            ExName=thisInfo.WideFieldChannelInfo{k}.Attributes.FFW_Excitation1FilterName;
+                            iminfo.filterblock(k)=[FluoCubeName ': ' ExName];
+                        elseif strcmpi(FluoCubeName,'DA/FI/TX')
+                            ExName=thisInfo.WideFieldChannelInfo{k}.Attributes.UserDefName;
+                            iminfo.filterblock(k)=[FluoCubeName ': ' ExName];
+                        else
+                            ExName=FluoCubeName;
+                            iminfo.filterblock(k)=FluoCubeName;
+                        end
+                    end
+                    if strcmpi(ExName,'DAPI') || strcmpi(ExName,'DAP') || strcmpi(ExName,'A') || strcmpi(ExName,'Blue')
+                        iminfo.excitation(k)=355;
+                        iminfo.emission(k)=460;
+                    end
+                    if strcmpi(ExName,'GFP') || strcmpi(ExName,'L5') || strcmpi(ExName,'I5') || strcmpi(ExName,'Green') || strcmpi(ExName,'FITC')
+                        iminfo.excitation(k)=480;
+                        iminfo.emission(k)=527;
+                    end
+                    if strcmpi(ExName,'N3') || strcmpi(ExName,'N2.1') || strcmpi(ExName,'TRITC')
+                        iminfo.excitation(k)=545;
+                        iminfo.emission(k)=605;
+                    end
+                    if strcmpi(ExName,'488')
+                        iminfo.excitation(k)=488;
+                        iminfo.emission(k)=525;
+                    end
+                    if strcmpi(ExName,'532')
+                        iminfo.excitation(k)=532;
+                        iminfo.emission(k)=550;
+                    end                
+                    if strcmpi(ExName,'642')
+                        iminfo.excitation(k)=642;
+                        iminfo.emission(k)=670;
+                    end                
+                    if strcmpi(ExName,'Red')
+                        iminfo.excitation(k)=545;
+                        iminfo.emission(k)=605;
+                    end
+                    if strcmpi(ExName,'Y3') || strcmpi(ExName,'I3') || strcmpi(ExName,'CY 3') || strcmpi(ExName,'CY3')
+                        iminfo.excitation(k)=545;
+                        iminfo.emission(k)=605;
+                    end
+                    if strcmpi(ExName,'Y5') || strcmpi(ExName,'CY5') || strcmpi(ExName,'CY 5')
+                        iminfo.excitation(k)=590;
+                        iminfo.emission(k)=670;
+                    end
+                end
+            end
+        end
+
+        % Recalculate resolution to micrometer
+        if strcmpi(iminfo.resunit,'meter') || strcmpi(iminfo.resunit,'m')
+            iminfo.xres2=iminfo.xres*1000000;
+            iminfo.yres2=iminfo.yres*1000000;
+            iminfo.zres2=iminfo.zres*1000000;
+        end
+        if strcmpi(iminfo.resunit,'centimeter')
+            iminfo.xres2=iminfo.xres*10000;
+            iminfo.yres2=iminfo.yres*10000;
+            iminfo.zres2=iminfo.zres*10000;
+        end
+        if strcmpi(iminfo.resunit,'inch')
+            iminfo.xres2=iminfo.xres*25400;
+            iminfo.yres2=iminfo.yres*25400;
+            iminfo.zres2=iminfo.zres*25400;
+        end
+        if strcmpi(iminfo.resunit,'milimeter')
+            iminfo.xres2=iminfo.xres*1000;
+            iminfo.yres2=iminfo.yres*1000;
+            iminfo.zres2=iminfo.zres*1000;
+        end
+        if strcmpi(iminfo.resunit,'micrometer')
+            iminfo.xres2=iminfo.xres;
+            iminfo.yres2=iminfo.yres;
+            iminfo.zres2=iminfo.zres;
+        end
+
+    %             xmlTiles = xDoc.getElementsByTagName('Tile');
+    %             if ~isempty(iminfo.tiles)
+    %                 iminfo.tilelist=zeros(iminfo.tiles,2); % posx, posy
+    %                 iminfo.tilemax=zeros(2,1);  % maxx and maxy
+    %                 for k = 0:xmlTiles.getLength-1
+    %                     thisTile = xmlTiles.item(k);
+    %                     x=str2double(char(thisTile.getAttribute('FieldX')));
+    %                     y=str2double(char(thisTile.getAttribute('FieldY')));
+    %                     if x+1>iminfo.tilemax(1); iminfo.tilemax(1)=x+1;end
+    %                     if y+1>iminfo.tilemax(2); iminfo.tilemax(2)=y+1;end
+    %                     iminfo.tilelist(k+1,1)=x; iminfo.tilelist(k+1,2)=y;
+    %                 end
+    %                 xmlInfo = xDoc.getElementsByTagName('StitchingSettings');
+    %                 thisInfo = xmlInfo.item(0);
+    %                 iminfo.overlapprocx=str2double(char(thisInfo.getAttribute('OverlapPercentageX')));
+    %                 iminfo.overlapprocy=str2double(char(thisInfo.getAttribute('OverlapPercentageY')));
+    %             end
+        result=true;
+    elseif strcmpi(lifinfo.datatype,'eventlist')
+        iminfo.channels=1;
+        iminfo.NumberOfEvents=str2double(lifinfo.GISTEventList.GISTEventListDescription.NumberOfEvents.Attributes.NumberOfEventsValue);
+        iminfo.Threshold=str2double(lifinfo.GISTEventList.GISTEventListDescription.LocalizationParameters.Attributes.Threshold);
+        iminfo.Gain=str2double(lifinfo.GISTEventList.GISTEventListDescription.LocalizationParameters.Attributes.Gain);
+        iminfo.FieldOfViewX=str2double(lifinfo.GISTEventList.GISTEventListDescription.LocalizationParameters.Attributes.FieldOfViewX2);
+        iminfo.FieldOfViewY=str2double(lifinfo.GISTEventList.GISTEventListDescription.LocalizationParameters.Attributes.FieldOfViewY2);
+        %s=cfXML2struct(cfXMLReadString(['<?xml version="1.0" encoding="ISO-8859-1"?>' lifinfo.GISTEventList.GISTEventListDescription.DataAnalysis.Attributes.XML3DCalibration]));
+        serror='';  
+        result=true;
+    end
+end
+
+
+%%
+function imdata = cfReadIm(lifinfo, iminfo, channel, z, t, tile)
+    if strcmpi(lifinfo.filetype,".lif")
+        % LIF
+        fid=fopen(lifinfo.LIFFile,'r','n','UTF-8');
+
+        p=iminfo.channelbytesinc(channel);
+        p=p+(z-1)*iminfo.zbytesinc;
+        p=p+(tile-1)*iminfo.tilesbytesinc;
+        p=p+(t-1)*iminfo.tbytesinc;
+
+        LIFOffset=lifinfo.Position;
+        p=p+LIFOffset;
+
+        fseek(fid,p,'bof');
+        if iminfo.isrgb
+            if iminfo.channelResolution(channel)==8
+                imdata=fread(fid, iminfo.ys*iminfo.xs*3, '*uint8');
+                redChannel = reshape(imdata(1:3:end), [iminfo.xs, iminfo.ys]);
+                greenChannel = reshape(imdata(2:3:end), [iminfo.xs, iminfo.ys]);
+                blueChannel = reshape(imdata(3:3:end), [iminfo.xs, iminfo.ys]);
+                imdata = cat(3, redChannel, greenChannel, blueChannel);                
+            else
+                imdata=fread(fid, iminfo.ys*iminfo.xs*3, '*uint16');
+                redChannel = reshape(imdata(1:3:end), [iminfo.xs, iminfo.ys]);
+                greenChannel = reshape(imdata(2:3:end), [iminfo.xs, iminfo.ys]);
+                blueChannel = reshape(imdata(3:3:end), [iminfo.xs, iminfo.ys]);
+                imdata = cat(3, redChannel, greenChannel, blueChannel);                 
+            end
+            imdata=permute(imdata,[2 1 3]);
+        else
+            if iminfo.channelResolution(channel)==8
+                imdata=fread(fid, [iminfo.xs,iminfo.ys], '*uint8');
+            else
+                imdata=fread(fid, [iminfo.xs,iminfo.ys], '*uint16');
+            end
+            imdata=transpose(imdata);  % correct orientation (for stitching)
+        end
+        fclose(fid);
+    end
+    if strcmpi(lifinfo.filetype,".xlef")
+        % LOF
+        fid=fopen(lifinfo.LOFFile,'r','n','UTF-8');
+
+        p=iminfo.channelbytesinc(channel);
+        p=p+(z-1)*iminfo.zbytesinc;
+        p=p+(tile-1)*iminfo.tilesbytesinc;
+        p=p+(t-1)*iminfo.tbytesinc;
+
+        LIFOffset=62;  %4 + 4 + 1 + 4 + 30 (LMS_Object_File=2*15) + 1 + 4 + 1 + 4 + 1 + 8
+        p=p+LIFOffset;
+
+        fseek(fid,p,'bof');
+
+        if iminfo.isrgb
+            if iminfo.channelResolution(channel)==8
+                imdata=fread(fid, iminfo.ys*iminfo.xs*3, '*uint8');
+                redChannel = reshape(imdata(1:3:end), [iminfo.xs, iminfo.ys]);
+                greenChannel = reshape(imdata(2:3:end), [iminfo.xs, iminfo.ys]);
+                blueChannel = reshape(imdata(3:3:end), [iminfo.xs, iminfo.ys]);
+                imdata = cat(3, redChannel, greenChannel, blueChannel);                
+            else
+                imdata=fread(fid, iminfo.ys*iminfo.xs*3, '*uint16');
+                redChannel = reshape(imdata(1:3:end), [iminfo.xs, iminfo.ys]);
+                greenChannel = reshape(imdata(2:3:end), [iminfo.xs, iminfo.ys]);
+                blueChannel = reshape(imdata(3:3:end), [iminfo.xs, iminfo.ys]);
+                imdata = cat(3, redChannel, greenChannel, blueChannel);                 
+            end
+            imdata=permute(imdata,[2 1 3]);
+        else
+            if iminfo.channelResolution(channel)==8
+                imdata=fread(fid, [iminfo.xs,iminfo.ys], '*uint8');
+            else
+                imdata=fread(fid, [iminfo.xs,iminfo.ys], '*uint16');
+            end
+            imdata=transpose(imdata);  % correct orientation (for stitching)
+        end
+        fclose(fid);
+    end
+end
+
+
+%%
+function  outStruct  = cfXML2struct(input)
+%XML2STRUCT converts xml file into a MATLAB structure
+%
+% outStruct = cfXML2struct(input)
+% 
+% xml2struct2 takes either a java xml object, an xml file, or a string in
+% xml format as input and returns a parsed xml tree in structure. 
+% 
+% Please note that the following characters are substituted
+% '-' by '_dash_', ':' by '_colon_' and '.' by '_dot_'
+%
+% Originally written by W. Falkena, ASTI, TUDelft, 21-08-2010
+% Attribute parsing speed increase by 40% by A. Wanner, 14-6-2011
+% Added CDATA support by I. Smirnov, 20-3-2012
+% Modified by X. Mo, University of Wisconsin, 12-5-2012
+% Modified by Chao-Yuan Yeh, August 2016
+
+errorMsg = ['%s is not in a supported format.\n\nInput has to be',...
+        ' a java xml object, an xml file, or a string in xml format.'];
+
+% check if input is a java xml object
+if isa(input, 'org.apache.xerces.dom.DeferredDocumentImpl') ||...
+        isa(input, 'org.apache.xerces.dom.DeferredElementImpl')
+    xDoc = input;
 else
-    n=1;
+    try 
+        if exist(input, 'file') == 2
+            xDoc = xmlread(input);
+        else
+            try
+                xDoc = xmlFromString(input);
+            catch
+                error(errorMsg, inputname(1));
+            end
+        end
+    catch ME
+        if strcmp(ME.identifier, 'MATLAB:UndefinedFunction')
+            error(errorMsg, inputname(1));
+        else
+            rethrow(ME)
+        end
+    end
 end
 
-% -=- Set up framerange -=-
-if strcmp('X-Y-T',dat{number,3})
-    framerange=[max([framerange(1) 1]) ... % first frame is 1, not 0!
-        min([framerange(2) ...
-        str2double(imgList(number).Dimensions(3).NumberOfElements)])];
-else
-    warning('Framerange is supported only for X-Y-T data.')
-    framerange=[0 imgList(number).Dimensions(3).NumberOfElements];
-end
-if str2double(imgList(number).Dimensions(3).BitInc)~=0
-    warning('Framerange is supported only for BitInc=0.')
-    framerange=[0 imgList(number).Dimensions(3).NumberOfElements];
+% parse xDoc into a MATLAB structure
+outStruct = parseChildNodes(xDoc);
+    
 end
 
-imgData  = ReadAnImageData(imgList(n),filename,framerange);
-imgStruct= ReconstructImage(imgList(n),imgData,framerange);
-imgStruct.Name            = dat{n,1};
-imgStruct.Type            = dat{n,3};
-imgStruct.NumberOfChannel = dat{n,2};
-imgStruct.AllocatedFrames=imgList(n).Dimensions(3).NumberOfElements;
-imgStruct.SeriesNames = {dat{:,1}};
-dt = str2double(imgStruct.Info.Dimensions(3).Length) / ...
-    str2double(imgStruct.Info.Dimensions(3).NumberOfElements);
-imgStruct.Info.Dimensions(3).NumberOfElements = ...
-    num2str(size(imgStruct.Image{1},4));
-imgStruct.Info.Dimensions(3).Origin = ...
-    num2str((framerange(1)-1)*dt,'%01.6e');
-imgStruct.Info.Dimensions(3).Length = ...
-    num2str((diff(framerange)+1)*dt,'%01.6e');
-imgout=imgStruct;
-return
+% ----- Local function parseChildNodes -----
+function [children, ptext, textflag] = parseChildNodes(theNode)
+% Recurse over node children.
+children = struct;
+ptext = struct; 
+textflag = 'Text';
+
+if hasChildNodes(theNode)
+    childNodes = getChildNodes(theNode);
+    numChildNodes = getLength(childNodes);
+
+    for count = 1:numChildNodes
+
+        theChild = item(childNodes,count-1);
+        [text, name, attr, childs, textflag] = getNodeData(theChild);
+        
+        if ~strcmp(name,'#text') && ~strcmp(name,'#comment') && ...
+                ~strcmp(name,'#cdata_dash_section')
+            % XML allows the same elements to be defined multiple times,
+            % put each in a different cell
+            if (isfield(children,name))
+                if (~iscell(children.(name)))
+                    % put existsing element into cell format
+                    children.(name) = {children.(name)};
+                end
+                index = length(children.(name))+1;
+                % add new element
+                children.(name){index} = childs;
+                
+                textfields = fieldnames(text);
+                if ~isempty(textfields)
+                    for ii = 1:length(textfields)
+                        children.(name){index}.(textfields{ii}) = ...
+                            text.(textfields{ii});
+                    end
+                end
+                if(~isempty(attr)) 
+                    children.(name){index}.('Attributes') = attr; 
+                end
+            else
+                % add previously unknown (new) element to the structure
+                
+                children.(name) = childs;
+                
+                % add text data ( ptext returned by child node )
+                textfields = fieldnames(text);
+                if ~isempty(textfields)
+                    for ii = 1:length(textfields)
+                        children.(name).(textfields{ii}) = text.(textfields{ii});
+                    end
+                end
+
+                if(~isempty(attr)) 
+                    children.(name).('Attributes') = attr; 
+                end
+            end
+        else
+            ptextflag = 'Text';
+            if (strcmp(name, '#cdata_dash_section'))
+                ptextflag = 'CDATA';
+            elseif (strcmp(name, '#comment'))
+                ptextflag = 'Comment';
+            end
+
+            % this is the text in an element (i.e., the parentNode) 
+            if (~isempty(regexprep(text.(textflag),'[\s]*','')))
+                if (~isfield(ptext,ptextflag) || isempty(ptext.(ptextflag)))
+                    ptext.(ptextflag) = text.(textflag);
+                else
+                    % This is what happens when document is like this:
+                    % <element>Text <!--Comment--> More text</element>
+                    %
+                    % text will be appended to existing ptext
+                    ptext.(ptextflag) = [ptext.(ptextflag) text.(textflag)];
+                end
+            end
+        end
+
+    end
+end
+end
+
+% ----- Local function getNodeData -----
+function [text,name,attr,childs,textflag] = getNodeData(theNode)
+% Create structure of node info.
+
+%make sure name is allowed as structure name
+name = char(getNodeName(theNode));
+name = strrep(name, '-', '_dash_');
+name = strrep(name, ':', '_colon_');
+name = strrep(name, '.', '_dot_');
+name = strrep(name, '_', 'u_');
+
+attr = parseAttributes(theNode);
+if (isempty(fieldnames(attr))) 
+    attr = []; 
+end
+
+%parse child nodes
+[childs, text, textflag] = parseChildNodes(theNode);
+
+% Get data from any childless nodes. This version is faster than below.
+if isempty(fieldnames(childs)) && isempty(fieldnames(text))
+    text.(textflag) = char(getTextContent(theNode));
+end
+
+% This alterative to the above 'if' block will also work but very slowly.
+% if any(strcmp(methods(theNode),'getData'))
+%   text.(textflag) = char(getData(theNode));
+% end
+    
+end
+
+% ----- Local function parseAttributes -----
+function attributes = parseAttributes(theNode)
+% Create attributes structure.
+attributes = struct;
+if hasAttributes(theNode)
+   theAttributes = getAttributes(theNode);
+   numAttributes = getLength(theAttributes);
+
+   for count = 1:numAttributes
+        % Suggestion of Adrian Wanner
+        str = char(toString(item(theAttributes,count-1)));
+        k = strfind(str,'='); 
+        attr_name = str(1:(k(1)-1));
+        attr_name = strrep(attr_name, '-', '_dash_');
+        attr_name = strrep(attr_name, ':', '_colon_');
+        attr_name = strrep(attr_name, '.', '_dot_');
+        attributes.(attr_name) = str((k(1)+2):(end-1));
+   end
+end
+end
+
+% ----- Local function xmlFromString -----
+function xmlroot = xmlFromString(iString)
+import org.xml.sax.InputSource
+import java.io.*
+
+iSource = InputSource();
+iSource.setCharacterStream(StringReader(iString));
+xmlroot = xmlread(iSource);
+end
 
 
+%%
 function [dimType, dimSize]=GetDimensionInfo(dimensions)
 ndims=numel(dimensions);
 dimType=cell(2*ndims,1);
@@ -154,365 +1086,6 @@ for n=1:ndims
 end
 dimType=strrep(sprintf('%s',char(dimType)'),' ','');
 dimType=dimType(1:end-1);% Delete last '-'
-
-function imgList=ReconstructImage(imgInfo,imgData,framerange)
-% ===================================================================
-% imgInfo description
-% ===================================================================
-% <ChannelDescription>
-%%% DataType   [0, 1]               [Integer, Float]
-%%% ChannelTag [0, 1, 2, 3]         [GrayValue, Red, Green, Blue]
-% Resolution [Unsigned integer]   Bits per pixel if DataType is Float value can be 32 or 64 (float or double)
-% NameOfMeasuredQuantity [String] Name
-% Min        [Double] Physical Value of the lowest gray value (0). If DataType is Float the Minimal possible value (or 0).
-% Max        [Double] Physical Value of the highest gray value (e.g. 255) If DataType is Float the Maximal possible value (or 0).
-% Unit       [String] Physical Unit
-% LUTName    [String] Name of the Look Up Table (Gray value to RGB value)
-% IsLUTInverted [0, 1] Normal LUT Inverted Order
-%%% BytesInc   [Unsigned long (64 Bit)] Distance from the first channel in Bytes
-% BitInc     [Unsigned Integer]       Bit Distance for some RGB Formats (not used in LAS AF 1..0 ? 1.7)
-% <DimensionDescription>
-% DimID   [0, 1, 2, 3, 4, 5, 6, 7, 8] [Not valid, X, Y, Z, T, Lambda, Rotation, XT Slices, T Slices]
-%%% NumberOfElements [Unsigned Integer] Number of elements in this dimension
-% Origin           [Unsigned integer] Physical position of the first element (Left pixel side)
-% Length   [String] Physical Length from the first left pixel side to the last left pixel side (Not the right. A Pixel has no width!)
-% Unit     [String] Physical Unit
-%%% BytesInc [Unsigned long (64 Bit)] Distance from one Element to the next in this dimension
-% BitInc   [Unsigned Integer] Bit Distance for some RGB Formats (not used, i.e.: = 0 in LAS AF 1..0 ? 1.7)
-% ===================================================================
-% imgList info
-% ===================================================================
-% img
-
-% Get Dimension info
-dimension=ones(1,9);
-for m=1:numel(imgInfo.Dimensions)
-    dimension(str2double(imgInfo.Dimensions(m).DimID)) = ...
-        str2double(imgInfo.Dimensions(m).NumberOfElements);
-end
-dimension(4)=diff(framerange)+1; % dimension(4) is T
-
-% Separate to each channel image
-nCh=numel(imgInfo.Channels);
-imgList=struct('Image',[],'Info',[]);
-imgList.Image = cell(nCh,1);
-if nCh > 1
-    imgData=reshape(imgData,...
-        str2double(imgInfo.Channels(2).BytesInc) - ...
-        str2double(imgInfo.Channels(1).BytesInc),[]);
-    for m=1:nCh
-        tmp=imgData(:,m:nCh:end);
-        imgList.Image{m} = reshape(typecast(tmp(:), ...
-            GetType(imgInfo.Channels(m))),dimension);
-    end
-else
-    imgList.Image{1} = reshape(typecast(imgData, ...
-        GetType(imgInfo.Channels)),dimension);
-end
-imgList.Info = imgInfo;
-
-function chType=GetType(Channels)
-switch str2double(Channels.DataType)
-    case 0 % int case
-        switch str2double(Channels.Resolution)
-            % currently, resolution is constant through the channels
-            case 8;   chType='uint8';
-            case 16;  chType='uint16';
-            case 32;  chType='uint32';
-            case 64;  chType='uint64';
-            otherwise;error('Unsupported data bit. ')
-        end
-    case 1 % float case
-        switch str2double(Channels.Resolution)
-            % currently, resolution is constant through the channels
-            case 32;  chType='single';
-            case 64;  chType='double';
-            otherwise;error('Unsupported data bit. ')
-        end
-end
-
-function mems = GetImageDescriptionList(xmlList)
-%  For the image data type the description of the memory layout is defined
-%  in the image description XML node (<ImageDescription>).
-
-% <ImageDescription>
-imgIndex  =SearchTag(xmlList,'ImageDescription');
-numImgs=numel(imgIndex);
-
-% <Memory Size="21495808" MemoryBlockID="MemBlock_233"/>
-memIndex  =SearchTag(xmlList,'Memory');
-memSizes  =cellfun(@str2double,GetAttributeVal(xmlList,memIndex,'Size'));
-memIndex=memIndex(memSizes~=0);
-memSizes=memSizes(memSizes~=0);
-if numImgs~=numel(memIndex)
-    error('Number of ImageDescription and Memory did not match.')
-end
-
-% Matching ImageDescription with Memory
-imgParentElmIndex =  zeros(numImgs,1);
-for n=1:numImgs
-    imgParentElmIndex(n) = SearchTagParent(xmlList,imgIndex(n),'Element');
-end
-memParentElmIndex =  zeros(numImgs,1);
-for n=1:numImgs
-    memParentElmIndex(n) = SearchTagParent(xmlList,memIndex(n),'Element');
-end
-[imgParentElmIndex, sortIndex]=sort(imgParentElmIndex); imgIndex=imgIndex(sortIndex);
-[memParentElmIndex, sortIndex]=sort(memParentElmIndex); memIndex=memIndex(sortIndex);memSizes=memSizes(sortIndex);
-if ~all(imgParentElmIndex==memParentElmIndex)
-    error('Matching ImageDescriptions with Memories')
-end
-
-mems=struct('Name',[],'Channels',[],'Dimensions',[],'Memory',[]);
-mems(numImgs).Memory.StartPosition=[];
-for n=1:numImgs
-    mems(n).Name = char(GetAttributeVal(xmlList, imgParentElmIndex(n),'Name'));
-    [mems(n).Channels, mems(n).Dimensions]= MakeImageStruct(xmlList,imgIndex(n));
-    mems(n).Memory.Size=memSizes(n);
-    mems(n).Memory.MemoryBlockID=char(GetAttributeVal(xmlList,memIndex(n),'MemoryBlockID'));
-end
-
-
-return
-
-function [C, D]=MakeImageStruct(xmlList,iid)
-% ChannelDescription   DataType="0" ChannelTag="0" Resolution="8"
-%                      NameOfMeasuredQuantity="" Min="0.000000e+000" Max="2.550000e+002"
-%                      Unit="" LUTName="Red" IsLUTInverted="0" BytesInc="0"
-%                      BitInc="0"
-% DimensionDescription DimID="1" NumberOfElements="512" Origin="4.336809e-020"
-%                      Length="4.558820e-004" Unit="m" BitInc="0"
-%                      BytesInc="1"
-% Memory ?@?@?@?@?@?@?@  Size="21495808" MemoryBlockID="MemBlock_233"
-iidChildren=xmlList{iid,5};
-for n=1:numel(iidChildren)
-    if strcmp(xmlList{iidChildren(n),2},'Channels')
-        id=xmlList{iidChildren(n),5};
-        p=xmlList(id,3);
-        nid=numel(id);
-        tmp=cell(11,nid);
-        for m=1:nid
-            tmp(:,m)=p{m}(:,2);
-        end
-        C=cell2struct(tmp,p{1}(:,1),1);
-    elseif strcmp(xmlList{iidChildren(n),2},'Dimensions')
-        id=xmlList{iidChildren(n),5};
-        p=xmlList(id,3);
-        nid=numel(id);
-        tmp=cell(7,nid);
-        for m=1:nid
-            tmp(:,m)=p{m}(:,2);
-        end
-        D=cell2struct(tmp,p{1}(:,1),1);
-    else
-        error('Undefined Tag')
-    end
-end
-
-function lifVersion = GetLifVersion(xmlList)
-% return version of header
-index  =SearchTag(xmlList,'LMSDataContainerHeader');
-value  =GetAttributeVal(xmlList,index,'Version');
-lifVersion = str2double(cell2mat(value(1)));
-return
-
-function pindex=SearchTagParent(xmlList,index,tagName)
-% return the row index of given tag name
-pindex=xmlList{index,4};
-
-while pindex~=0
-    if strcmp(xmlList{pindex,2},tagName)
-        return;
-    else
-        pindex=xmlList{pindex,4};
-    end
-end
-error('Cannot Find the Parent Tag "%s"',tagName);
-
-function index=SearchTag(xmlList,tagName)
-% return the row index of given tag name
-listLen=size(xmlList,1);
-index=[];
-for n=1:listLen
-    if strcmp(char(xmlList(n,2)),tagName)
-        index=[index; n]; %#ok<AGROW>
-    end
-end
-
-function value=GetAttributeVal(xmlList, index, attributeName)
-% return cell array of attributes row index of given tag name
-value={};
-for n=1:length(index)
-    currentCell=xmlList{index(n),3};
-    for m=1:size(currentCell,1)
-        if strcmp(char(currentCell(m,1)),attributeName)
-            value=[value; currentCell(m,2)]; %#ok<AGROW>
-        end
-    end
-end
-
-function CheckTestValue(value,errorMsg)
-switch class(value)
-    case 'uint8';  trueVal=hex2dec('2A');
-    case 'uint32'; trueVal=hex2dec('70');
-    otherwise
-        error('Unsupported Error Number: %d',value)
-end
-if value~=trueVal
-    error(errorMsg);
-end
-return;
-
-function [fp, str, ketPos] = ReadXMLPart(fp)
-% Size(bytes) Total(bytes) description (some LAS-AF 3.x version give errors
-% here, fixed in LAS-X
-CheckTestValue(fread(fp,1,'*uint32'),...        % 4  4 Test Value 0x70
-    'Invalid test value at Part: XML.');
-xmlChunk = fread(fp, 1, 'uint32');              % 4  8 Binary Chunk length NC*2 + 1 + 4
-CheckTestValue(fread(fp,1,'*uint8'),...         % 1  9 Test Value 0x2A
-    'Invalid test value at XML Content.');
-nc = fread(fp,1,'uint32');                      % 4 13 Number of UTF-16 Characters (NC)
-if (nc*2 + 1 + 4)~=xmlChunk
-    error('Chunk size mismatch at Part: XML.');
-end
-str= fread(fp,nc*2,'char');                     % 2*nc - XML Object Description
-
-% UTF-16 -> UTF-8 (cut zeros)
-str     = char(str(1:2:end)');
-% Insert linefeed(char(10)) for facilitate visualization -----
-% str=strrep(str,'><',['>' char(10) '<']);
-ketPos =strfind(str,'>'); % find position of ">" for fast search of element
-return;
-
-function imgLists=ReadObjectMemoryBlocks(fp,lifVersion,imgLists)
-% get end of file and return current point
-cofp=    ftell(fp);
-fseek(fp,0,'eof');
-eofp=    ftell(fp);
-fseek(fp,cofp,'bof');
-
-nImgLists=length(imgLists);
-memoryList=cell(nImgLists,4);
-% ID(string), startPoint(uint64), sizeOfMemory, Index(double)
-for n = 1:nImgLists
-    memoryList{n,1}=imgLists(n).Memory.MemoryBlockID;
-end
-
-% read object memory blocks
-while ftell(fp) < eofp
-    
-    CheckTestValue(fread(fp,1,'*uint32'),...        % Test Value 0x70
-        'Invalied test value at Object Memory Block');
-    
-    objMemBlkChunk = fread(fp, 1, '*uint32');%#ok<NASGU> % Size of Description
-    
-    CheckTestValue(fread(fp,1,'*uint8'),...         % Test Value 0x2A
-        'Invalied test value at Object Memory Block');
-    
-    
-    switch uint8(lifVersion)            % Size of Memory (version dependent)
-        case 1; sizeOfMemory = double(fread(fp, 1, '*uint32'));
-        case 2; sizeOfMemory = double(fread(fp, 1, '*uint64'));
-        otherwise; error('Unsupported LIF version. Update this program');
-    end
-    
-    CheckTestValue(fread(fp,1,'*uint8'),...         % Test Value 0x2A
-        'Invalied test value at Object Memory Block');
-    
-    nc = fread(fp,1,'*uint32');                     % Number of MemoryID string
-    
-    str = fread(fp,nc*2,'*char')';                  % Number of MemoryID string (UTF-16)
-    str = char(str(1:2:end));                       % convert UTF-16 to UTF-8
-    
-    if sizeOfMemory > 0
-        for n=1:nImgLists
-            if strcmp(char(memoryList{n,1}),str) % NEED CONSIDERATION !!!!!!
-                if imgLists(n).Memory.Size ~= sizeOfMemory
-                    error('Memory Size Mismatch.');
-                end
-                imgLists(n).Memory.StartPosition=ftell(fp);
-                fseek(fp,sizeOfMemory,'cof');
-                break;
-            end
-        end
-    end
-end
-
-
-return;
-
-function imgData=ReadAnImageData(imgInfo,fileName,framerange)
-fp = fopen(fileName,'rb');
-if fp<0; errordlg('Cannot open file: \n\t%s', fileName); end
-inc=str2double(imgInfo.Dimensions(3).BytesInc);
-fseek(fp,imgInfo.Memory.StartPosition + (framerange(1)-1)*inc,'bof');
-imgData = fread(fp,(diff(framerange)+1)*inc,'*uint8');
-fclose(fp);
-
-function tagList=XMLtxt2cell(c)
-% rank(double) name(string) attributes(cell(n,2)) parant(double) children(double array)
-tags  =regexp(c,'<("[^"]*"|''[^'']*''|[^''>])*>','match')';
-nTags=numel(tags);
-tagList=cell(nTags,5);
-tagRank=0;
-tagCount=0;
-for n=1:nTags
-    currentTag=tags{n}(2:end-1);
-    if currentTag(1)=='/'
-        tagRank=tagRank-1;
-        continue;
-    end
-    tagRank=tagRank+1;
-    tagCount=tagCount+1;
-    [tagName, attributes]=ParseTagString(currentTag);
-    tagList{tagCount,1}=tagRank;
-    tagList{tagCount,2}=tagName;
-    tagList{tagCount,3}=attributes;
-    % search parant
-    if tagRank~=1
-        if tagRank~=tagList{tagCount-1,1}
-            tagRankList=cell2mat(tagList(1:tagCount,1));
-            parent=find(tagRankList==tagRank-1,1,'last');
-            tagList{tagCount,4}=parent;
-        else
-            tagList{tagCount,4}=tagList{tagCount-1,4};
-        end
-    else
-        tagList{tagCount,4} = 0;
-    end
-    if currentTag(end)=='/'
-        tagRank=tagRank-1;
-    end
-end
-
-tagList   =tagList(1:tagCount,:);
-parentList=cell2mat(tagList(:,4));
-% Make Children List
-for n=1:tagCount
-    tagList{n,5}=find(parentList==n);
-end
-
-return;
-
-function [name, attributes]=ParseTagString(tag)
-[name, tmpAttributes]=regexp(tag,'^\w+','match', 'split');
-name=char(name);
-attributesCell=regexp(char(tmpAttributes(end)),'\w+=".*?"','match');
-if isempty(attributesCell)
-    attributes={};
-else
-    nAttributes = numel(attributesCell);
-    attributes=cell(nAttributes,2);
-    for n=1:nAttributes
-        currAttrib=char(attributesCell(n));
-        dqpos=strfind(currAttrib,'"');
-        attributes{n,1}=currAttrib(1:dqpos(1)-2);
-        if dqpos(2)-dqpos(1)==1 % case attribute=""
-            attributes{n,2}='';
-        else
-            attributes{n,2}=currAttrib(dqpos(1)+1:dqpos(2)-1);
-        end
-    end
 end
 
 

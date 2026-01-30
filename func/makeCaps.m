@@ -74,7 +74,7 @@ function new_caps = extend_caps_local(bw_caps)
     
     new_caps = im2double(new_caps); % convert new_caps to double for use with insertShape
 
-    for i = 1 : size(stats) % run for every region detected
+    for i = 1 : length(stats) % run for every region detected
         % yf and xf are the projected lines of the caps based on the stats from regionprops and are algebraically equivalent
         yf = @(x) (1/tand(stats(i).Orientation - 90))*(x - centroids(i, 1)) + centroids(i, 2);
         xf = @(y) tand(stats(i).Orientation - 90)*(y - centroids(i, 2)) + centroids(i, 1);

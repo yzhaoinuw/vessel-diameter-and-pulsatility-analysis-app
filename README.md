@@ -1,6 +1,6 @@
 ## Installation
 
-After downloading the repo, you also need to download the \[bio-formats toolbox](https://www.openmicroscopy.org/bio-formats/downloads/) to run the app. After downloading it, you will get a folder called \*\*bfmatlab\*\*. Place it inside the app folder and you will be good to go!
+After downloading the repo, you also need to download the [bio-formats toolbox](https://www.openmicroscopy.org/bio-formats/downloads/) to run the app. After downloading it, you will get a folder called **bfmatlab**. Place it inside the app folder and you will be good to go!
 
 ## Usage
 

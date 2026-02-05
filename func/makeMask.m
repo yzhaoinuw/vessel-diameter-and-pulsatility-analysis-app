@@ -41,7 +41,7 @@ function images = makeMask(app, images)
 
         app.DilationPanel.Visible = 'on'; % gather the user input from panel_2
         disp('Mask Step 3: dilate the mask to include the edges in all frames')
-        numskip=max(round(size(images, 3)/100), 1);
+        numskip=max(round(size(images, 3)/app.maxPreviewFrames), 1);
         showind=1:numskip:size(images, 3);
         sz_dil=1;
         disp('The current mask is in red. The edges are shown in green. Make sure the mask includes all of the edges of interest. I often start by dilating with a structuring element of size 5 pixels. ')

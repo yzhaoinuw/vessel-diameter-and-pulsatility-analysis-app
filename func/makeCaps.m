@@ -5,7 +5,7 @@ function images = makeCaps(app, images)
 
 %% cap off the ends
 % only show a maximum of 100 images
-numskip=max(round(size(images, 3)/100), 1);
+numskip=max(round(size(images, 3)/app.maxPreviewFrames), 1);
 showind=1:numskip:size(images, 3);
 if isempty(app.mask) || size(app.mask, 1)==1
     imagei({images(:,:,showind) images(:,:,showind) images(:,:,showind)},{app.seg(:,:,showind)}), axis equal

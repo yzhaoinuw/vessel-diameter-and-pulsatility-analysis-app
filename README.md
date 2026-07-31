@@ -1,3 +1,7 @@
+# Vessel Diameter Pulsatility Analysis App
+
+[![Agent Collab Treaty](https://raw.githubusercontent.com/yzhaoinuw/agent_collab_treaty/main/assets/treaty-adopted.svg)](https://github.com/yzhaoinuw/agent_collab_treaty)
+
 ## Installation
 
 After downloading the repo, you also need to download the [bio-formats toolbox](https://www.openmicroscopy.org/bio-formats/downloads/) to run the app. After downloading it, you will get a folder called **bfmatlab**. Place it inside the app folder and you will be good to go!

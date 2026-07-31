@@ -1,0 +1,56 @@
+#!/bin/sh
+set -eu
+
+case "$0" in
+    /*) hook_path=$0 ;;
+    *) hook_path=$PWD/$0 ;;
+esac
+
+hook_dir=${hook_path%/*}
+repo_root=$(CDPATH= cd -- "$hook_dir/.." && pwd)
+cd "$repo_root"
+
+git_safe() {
+    git -c safe.directory="$repo_root" "$@"
+}
+
+staged_app=$(git_safe diff --cached --name-only --diff-filter=ACMRD -- app.mlapp)
+staged_export=$(git_safe diff --cached --name-only --diff-filter=ACMRD -- app_exported.m)
+
+if [ -z "$staged_app" ] && [ -z "$staged_export" ]; then
+    exit 0
+fi
+
+if [ -n "$staged_app" ] && ! git_safe diff --quiet -- app.mlapp; then
+    echo "app.mlapp has staged and unstaged versions."
+    echo "Stage the final app.mlapp before committing."
+    exit 1
+fi
+
+if [ -n "$staged_export" ] && ! git_safe diff --quiet -- app_exported.m; then
+    echo "app_exported.m has staged and unstaged versions."
+    echo "Regenerate and stage the final export before committing."
+    exit 1
+fi
+
+if [ -n "$staged_export" ] && [ -z "$staged_app" ] && \
+        ! git_safe diff --quiet -- app.mlapp; then
+    echo "app_exported.m is staged while app.mlapp has unstaged changes."
+    echo "Stage the final app.mlapp or regenerate the export from the committed app."
+    exit 1
+fi
+
+if ! command -v matlab >/dev/null 2>&1; then
+    echo "MATLAB is not available on PATH."
+    echo "Run setup_version_control from a MATLAB-enabled shell."
+    exit 1
+fi
+
+if [ -n "$staged_app" ]; then
+    echo "Refreshing app_exported.m from staged app.mlapp..."
+    matlab -batch "export_app_source;"
+    git_safe add -- app_exported.m
+fi
+
+echo "Verifying app_exported.m..."
+matlab -batch "export_app_source('verify');"

@@ -1,0 +1,53 @@
+# MATLAB generated files and caches
+*.asv
+*.autosave
+*.m~
+slprj/
+codegen/
+cache/
+.cache/
+
+# Raw microscopy and experimental recordings
+*.lif
+*.tif
+*.tiff
+*.nd2
+*.czi
+*.oir
+*.avi
+*.mp4
+*.mov
+*.m4v
+*.wmv
+
+# MATLAB data, generated figures, and spreadsheet exports
+*.mat
+*.fig
+*.png
+*.jpg
+*.jpeg
+*.eps
+*.pdf
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.ods
+
+# Local data and generated-output directories
+data/
+recordings/
+results/
+results_*/
+output/
+outputs/
+figures/
+plots/
+
+# Downloaded local dependency described in README.md
+bfmatlab/
+
+# OS metadata
+desktop.ini
+Thumbs.db
+.DS_Store

@@ -2,6 +2,8 @@
 
 After downloading the repo, you also need to download the [bio-formats toolbox](https://www.openmicroscopy.org/bio-formats/downloads/) to run the app. After downloading it, you will get a folder called **bfmatlab**. Place it inside the app folder and you will be good to go!
 
+The current development runtime is MATLAB R2025a. See `toolbox_requirements.txt` for the MATLAB toolbox requirements. The downloaded `bfmatlab/` folder is a local dependency and is intentionally not tracked by Git.
+
 ## Usage
 
 Download the vessel\_diameter\_pulsatility\_analysis\_app folder. Click app.mlapp to run the app. Once the app opens, you will go through the following steps to get the analysis results.
@@ -35,6 +37,46 @@ https://github.com/yzhaoinuw/vessel-diameter-and-pulsatility-analysis-app/assets
 ## Notes For Developers
 
 The core algorithm implemented in find\_img\_edges.m is broken into four functions in func/ to suit the app's purpose of being interactive with the user. The four functions are 1) findEdges, 2) makeMask, 3) makeCaps, and 4) makeSeg. Comments are added to outline the correspondence of the four functions to find\_img\_edges. **Every time find\_img\_edges gets updated, the developer should update the four functions as needed.**
+
+### App Designer and Git
+
+`app.mlapp` is the authoritative editable and runnable application. `app_exported.m` is a generated, tracked text companion for readable GitHub diffs and code review; do not edit it directly or treat it as a second source of truth.
+
+After a fresh clone, enable the repository-local pre-commit hook and generate the initial review copy:
+
+```powershell
+matlab -batch "setup_version_control"
+```
+
+The normal App Designer workflow is:
+
+1. Edit and run `app.mlapp` in App Designer.
+2. Generate the review copy with `matlab -batch "export_app_source"`.
+3. Verify exact synchronization with `matlab -batch "export_app_source('verify')"`.
+4. Commit `app.mlapp` and `app_exported.m` together.
+
+The pre-commit hook runs only when either app file is staged. It rejects staged/unstaged split versions, regenerates and stages `app_exported.m` when `app.mlapp` is staged, and verifies the pair before allowing the commit. Git treats `.mlapp` and other packaged MATLAB formats as binary; review application code in `app_exported.m` and use MATLAB's Comparison Tool when the packaged app or layout itself must be compared.
+
+Run MATLAB Code Analyzer on the workflow scripts with:
+
+```powershell
+matlab -batch "checkcode('export_app_source.m'); checkcode('setup_version_control.m')"
+```
+
+### Runtime map and data boundary
+
+- `app.mlapp`: UI layout, state, callbacks, and workflow orchestration.
+- `app_exported.m`: generated GitHub review artifact for `app.mlapp`.
+- `func/findEdges.m`, `func/makeMask.m`, `func/makeCaps.m`, and `func/makeSeg.m`: interactive stages adapted from `func/find_img_edges.m`.
+- `func/SegmentStack.m`, `func/seg.m`, and related helpers: segmentation and visualization support.
+- `util/ReadXMLPart.m`, `util/GetImageDescriptionList.m`, `util/ReadObjectMemoryBlocks.m`, `util/ReadAnImageData.m`, and `util/ReconstructImage.m`: the active Leica LIF loading path used by the app callback.
+- `imread_big.m`: the active TIFF stack loader, with an `imread` loop fallback in the app callback.
+- `func/ci_loadLif.m`: a separate tracked LIF loader that is not called by the current app callback.
+- `bfmatlab/`: downloaded Bio-Formats dependency used by alternate reader helpers, kept local and untracked.
+
+Keep callback code focused on UI state and orchestration. Put reusable processing logic in ordinary `.m` helpers under `func/` when practical, without duplicating the app's source of truth.
+
+Raw recordings such as LIF/TIFF files and generated MAT files, results, figures, spreadsheets, and videos are local experiment artifacts, not repository source. The ignore rules protect those formats and common output folders. They do not remove any files that Git already tracks.
 
 ## Credits
 

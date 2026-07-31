@@ -1,0 +1,15 @@
+* text=auto
+
+# MATLAB packaged/binary formats must not be text-normalized or auto-merged.
+*.mlapp binary
+*.mlx binary
+*.mat binary
+*.fig binary
+*.slx binary
+*.mltbx binary
+
+# Keep the generated review source and workflow files stable across platforms.
+app_exported.m text eol=lf
+export_app_source.m text eol=lf
+setup_version_control.m text eol=lf
+.githooks/* text eol=lf

@@ -1,6 +1,6 @@
 # Guidelines and Tips for Agents
 
-Read this file first when joining a session in this repository. It defines the product boundary, active runtime, source-control rules, and documentation workflow. Generic treaty mechanics live in [`treaty_conventions.md`](treaty_conventions.md); keep this file focused on this MATLAB application.
+Read this file first when joining a session in this repository. It defines the product boundary, active runtime, source-control rules, and documentation workflow. Generic treaty mechanics live in [`treaty_docs/treaty_conventions.md`](treaty_docs/treaty_conventions.md); keep this file focused on this MATLAB application.
 
 ## Startup Rule
 
@@ -68,27 +68,27 @@ Use MATLAB `visdiff` or the Comparison Tool for authoritative package/layout rev
 
 ## When To Update Treaty Docs
 
-At the end of substantive work, prepend a decision-focused entry to `work_log.md` and keep `next_steps.md` actionable unless the user asks not to document the work. Follow [Work Log Discipline](treaty_conventions.md#work-log-discipline); remove completed items rather than keeping a permanent history in `next_steps.md`.
+At the end of substantive work, prepend a decision-focused entry to `treaty_docs/work_log.md` and keep `treaty_docs/next_steps.md` actionable unless the user asks not to document the work. Follow [Work Log Discipline](treaty_docs/treaty_conventions.md#work-log-discipline); remove completed items rather than keeping a permanent history in `treaty_docs/next_steps.md`.
 
 ## Branch Handoff Discipline
 
-`dev` is the active work/staging branch; `main` is the integration/release branch. Do not open a pull request unless the user explicitly asks. Before switching or merging, confirm the current branch is committed, pushed or intentionally parked, and compare `main...HEAD` as described in [Branch Handoff](treaty_conventions.md#branch-handoff).
+`dev` is the active work/staging branch; `main` is the integration/release branch. Do not open a pull request unless the user explicitly asks. Before switching or merging, confirm the current branch is committed, pushed or intentionally parked, and compare `main...HEAD` as described in [Branch Handoff](treaty_docs/treaty_conventions.md#branch-handoff).
 
 ## Release / Tag Checklist
 
-Treat commit + push + tag, or any request to publish a version, as a release. Before tagging, update `change_log.txt` and user-facing documentation as applicable, record verification and branch/tag state in `work_log.md`, merge/synchronize the requested branches, then verify remote branch and tag refs. See [Release Gate](treaty_conventions.md#release-gate).
+Treat commit + push + tag, or any request to publish a version, as a release. Before tagging, update `change_log.txt` and user-facing documentation as applicable, record verification and branch/tag state in `treaty_docs/work_log.md`, merge/synchronize the requested branches, then verify remote branch and tag refs. See [Release Gate](treaty_docs/treaty_conventions.md#release-gate).
 
 ## Updating The Treaty
 
-Only update the installed treaty when the user asks. Use the direct CLI path above with `treaty diff`, `treaty update . --dry-run`, and `treaty update .`; start from a clean tracked worktree and resolve any merge conflicts before treating the update as complete. Do not hand-edit upstream-managed `treaty_conventions.md`.
+Only update the installed treaty when the user asks. Use the direct CLI path above with `treaty diff`, `treaty update . --dry-run`, and `treaty update .`; start from a clean tracked worktree and resolve any merge conflicts before treating the update as complete. Do not hand-edit upstream-managed `treaty_docs/treaty_conventions.md`.
 
 ## Documentation
 
 - `README.md` - user-facing installation, usage, App Designer workflow, and data boundary.
 - `project_overview.md` - active runtime path, source layout, active/secondary files, and authored/derived map.
-- `next_steps.md` - unfinished work; read `## Currently Hot` first.
-- `work_log.md` / `work_log_archive/` - recent decisions, verification evidence, and rotated history.
-- `treaty_conventions.md` - upstream-maintained collaboration procedures.
+- `treaty_docs/next_steps.md` - unfinished work; read `## Currently Hot` first.
+- `treaty_docs/work_log.md` / `treaty_docs/work_log_archive/` - recent decisions, verification evidence, and rotated history.
+- `treaty_docs/treaty_conventions.md` - upstream-maintained collaboration procedures.
 - `change_log.txt` - existing release notes; reconcile it before future version tags.
 
 ## Commit Message Guidelines

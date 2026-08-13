@@ -23,7 +23,7 @@ Remaining work:
 
 - Confirm whether Bio-Formats is still required and whether MAT input is a supported public feature.
 - With explicit data authorization, smoke-test one suitable non-sensitive input through selection, crop, threshold/mask/caps, full computation, and result saving.
-- Confirm the saved MAT fields and basic dimensions against `project_overview.md`.
+- Confirm the saved MAT fields and basic dimensions against `../project_overview.md`.
 - Update installation/usage wording after the supported loader contract is decided.
 - Only then consider removing, relocating, or testing secondary loader code; do not delete it based on static reachability alone.
 

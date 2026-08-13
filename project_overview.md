@@ -67,11 +67,12 @@ vessel_diameter_pulsatility_analysis_app/
 |- imread_big.m              # active TIFF stack loader
 |- bfmatlab/                 # local, untracked alternate reader dependency
 |- AGENTS.md                 # project-specific agent guidance
-|- treaty_conventions.md     # upstream treaty mechanics
 |- project_overview.md       # this architecture map
-|- next_steps.md             # active engineering threads
-|- work_log.md               # recent decision/verification history
-|- work_log_archive/         # rotated work-log history
+|- treaty_docs/              # working collaboration documents
+|  |- treaty_conventions.md  # upstream treaty mechanics
+|  |- next_steps.md          # active engineering threads
+|  |- work_log.md            # recent decision/verification history
+|  `- work_log_archive/      # rotated work-log history
 |- README.md                 # user-facing setup and usage
 |- change_log.txt            # existing release notes
 ```
@@ -100,13 +101,13 @@ vessel_diameter_pulsatility_analysis_app/
 
 - [`app.mlapp`](app.mlapp) - authoritative App Designer UI and callbacks.
 - MATLAB helpers under `func/`, `util/`, and [`imread_big.m`](imread_big.m).
-- `README.md`, `AGENTS.md`, `project_overview.md`, `next_steps.md`, and `work_log.md`.
+- `README.md`, `AGENTS.md`, `project_overview.md`, `treaty_docs/next_steps.md`, and `treaty_docs/work_log.md`.
 - `export_app_source.m`, `setup_version_control.m`, and `.githooks/pre-commit`.
 
 ### Derived - never hand-edit; regenerate instead
 
 - [`app_exported.m`](app_exported.m) - regenerate with `matlab -batch "export_app_source"`; source of truth is `app.mlapp`.
-- [`treaty_conventions.md`](treaty_conventions.md) and `work_log_archive/README.md` - installed/upstream-managed treaty content; update with the treaty CLI rather than customizing their mechanics locally.
+- [`treaty_docs/treaty_conventions.md`](treaty_docs/treaty_conventions.md) and `treaty_docs/work_log_archive/README.md` - installed/upstream-managed treaty content; update with the treaty CLI rather than customizing their mechanics locally.
 - Raw recordings, result MAT files, figures, spreadsheets, and videos - experiment artifacts, not maintained source.
 
 ## Tests And Fixtures
